@@ -1,0 +1,98 @@
+WebQuake
+Copyright (c) Luke Whelan
+https://github.com/lukemattle/webquake
+
+The source code in this repository is licensed under the GNU Affero General
+Public License v3.0. See LICENSE for the full text.
+
+The AGPL covers the code only. Several data and media assets bundled here were
+not created by this project and are NOT relicensed by it. They remain under the
+terms of their respective owners, listed below. Anyone redistributing WebQuake,
+or deploying a modified copy, is responsible for complying with those terms in
+addition to the AGPL.
+
+--------------------------------------------------------------------------------
+1. Seismic and geographic data
+--------------------------------------------------------------------------------
+
+private/jma-stations.json
+private/snet_stations.json
+public/japan-regions.geojson
+public/tsunami-regions.geojson
+
+    Derived from observation point and area-code information published by the
+    Japan Meteorological Agency (気象庁 / JMA).
+    https://www.jma.go.jp/
+
+    JMA content is generally published under the Government of Japan Standard
+    Terms of Use (Version 2.0), which permits reproduction and redistribution,
+    including for commercial purposes and in modified form, with attribution.
+    Those terms are broadly compatible with CC BY 4.0.
+    https://www.jma.go.jp/jma/kishou/info/coment.html
+
+private/nied_stations.json
+
+    Derived from observation point information published by the National
+    Research Institute for Earth Science and Disaster Resilience
+    (国立研究開発法人防災科学技術研究所 / NIED), operators of the Kyoshin
+    Monitor real-time seismic intensity service.
+    https://www.bosai.go.jp/  |  http://www.kmoni.bosai.go.jp/
+
+Real-time observation data
+
+    Fetched at runtime from the Kyoshin Monitor service operated by NIED, and
+    from JMA telegrams delivered via the DMDATA / DM-DSS service
+    (https://dmdata.jp/), which requires a paid subscription. No such data is
+    redistributed in this repository. Users of a WebQuake deployment obtain
+    this data under their own subscription and under the terms of the
+    respective operators.
+
+Kyoshin Monitor colour-scale conversion
+
+    The algorithm converting Kyoshin Monitor tile colours back to seismic
+    intensity values is derived from a method published on Qiita, attributed
+    inline in the source where it is implemented.
+
+--------------------------------------------------------------------------------
+2. Audio
+--------------------------------------------------------------------------------
+
+public/new_quake.mp3
+public/new_info.mp3
+public/new-report.mp3
+public/new-tsunami.mp3
+
+    Obtained from Pixabay (https://pixabay.com/) and used under the Pixabay
+    Content License, which permits free commercial and non-commercial use
+    without attribution. Note that the Pixabay licence does not permit
+    redistributing the audio as a standalone downloadable file; these are
+    included solely as alert sounds within the application.
+
+public/tsunami-warning.mp3
+
+    The tsunami warning chime of the Japan Meteorological Agency (気象庁 / JMA).
+    This audio is the property of the JMA. It is NOT covered by the AGPL, and
+    the Government of Japan Standard Terms of Use that apply to JMA's published
+    data do not clearly extend to their broadcast alert audio. It is included
+    here for fidelity to the official alerting sound. Anyone redistributing or
+    deploying WebQuake should satisfy themselves that this use is acceptable in
+    their jurisdiction, or replace the file.
+
+--------------------------------------------------------------------------------
+3. Third-party software loaded at runtime
+--------------------------------------------------------------------------------
+
+No third-party source code is bundled in this repository. The following are
+loaded from their own CDNs at runtime by the browser and remain under their own
+licences:
+
+    Leaflet 1.9.4              BSD 2-Clause      https://leafletjs.com/
+    OneSignal Web SDK v16      Modified MIT      https://onesignal.com/
+    Roboto (Google Fonts)      Apache-2.0        https://fonts.google.com/
+    CARTO basemap tiles        CC BY 3.0 / ODbL  https://carto.com/basemaps/
+    OpenStreetMap data         ODbL              https://www.openstreetmap.org/copyright
+
+Python dependencies are installed from PyPI (see private/requirements.txt) and
+are all under permissive licences: BSD-3-Clause (Flask, httpx, numpy), MIT
+(Flask-Sock, Flask-Compress, simple-websocket, brotli), HPND (Pillow), and
+Apache-2.0 (requests, websocket-client).

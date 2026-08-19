@@ -1,0 +1,60 @@
+v0.9.0: initial beta
+v0.9.1: fix settings menu appearing in wrong place
+v0.9.2: fix incorrect map display for slight sea level change & add context clicks for tsunami regions and obs.
+v0.9.3: fix version number overlapping in footer on mobile
+v0.9.4: make leaflet footer hug the right and hide itself behind quake history tab if needed
+v0.9.5: add notifications on EEW forecast/warning and tsunami
+v0.9.6: fix key overlap on mobile and map not zooming to the epicentre on a quake occuring near the ryukyu islands.
+v0.9.7: fix past quake regions still being shown when user dismisses it or new EEW arrives
+v0.9.8: fix WQ+JMA source label overlapping JMA button in past quake list
+v0.9.9: move version label to left side on mobile to avoid overlap
+v0.9.10: fix quake history ordering and add per source tracking
+v0.10.0: add 24 hour history, with scrollable timeline
+v0.10.1: remove nied warning when viewing history and fix not grabbing points cahce after viewing past
+v0.10.2: add 500ms delay to scrubbing to avoid spamming requests
+v0.10.3: add ntfy.sh as a more reliable alternative to onesignal/web push
+v0.10.4: change notification formatting
+v0.10.5: fix close button not going back to live, make arrow keys go back/forward 10s and improve styling of event overlay on replay timeline
+v0.10.6: clicking a quake marker on the replay timeline now jumps to when the quake occurred instead of when the report was received (tsunami markers still jump to report time)
+v0.10.7: fix version number overlapping the intensity key on mobile again (cascade order bug)
+v0.10.8: fix P/S wave circles using real time instead of replay time, making them appear too far away during replay
+v0.10.9: fix WQ source tag spacing to match JMA tag, and fall back to per-station max intensity when VXSE53 reports no max_int
+v0.10.10: add ram cache for 24 hour replay to improve performance
+v0.10.11: remove icons from replay timeline and add replay buttons to quake history list when appplicable
+v0.10.12: fix icon overlap, settings icon size and juttery p/s waves in replay
+v0.10.13: replace settings/replay icons with svg for platform continuity
+v0.10.14: fix WQ+JMA overlap
+v0.10.15: fix empty stations and no auto play on replay and auto hide history tab on mobile on click
+v0.10.16: make quake replay jump to occurrence time -5s rather than start of minute and extend replay to 48h
+v0.10.17: add 3/6h labels to timeline and widen it on desktop
+v0.10.18: fix timeline label positioning and add loading icon to timeline
+v0.10.19: speed up replay start by buffering a small window first and prefetching the rest in the background
+v0.10.20: fix timeline replay
+v0.10.21: ensure quake history is updated when switching back to live replay & change polling for past quake replays to only happen on a new quake
+v0.11.0: backend performance improvements: use dedicated writer for db, convert nied gifs into numpy arrays, enable ws compression for initial data load and cache quake points index
+v0.11.1: frontend performance improvements: render map vectors on canvas, only resize canvas on actual resize, coalesce station redraws to one per frame, and presort station dots on data change instead of every frame
+v0.11.2: move buttons in quake history cards and stop random new info sounds
+v0.11.3: change notif title for quake info and only play sound again if quake details have changed
+v0.11.4: backend perf. improvements: reuse http connections for polling, fetch nied maps in parallel, precompress large static assets, skip re-parsing history payloads and old backfill files, and fix saved messages overwriting each other within the same second
+v0.11.5: frontend perf. improvements: cache max intensity for the map key instead of scanning stations every frame, coalesce data-driven redraws with pan redraws, cull off-screen station dots and reuse latlngs, only rebuild timeline ticks/gaps on open/resize/refresh instead of every second, keep persistent station indexes for diffs, preload region geojsons and trim the font download
+v0.11.6: ensure waves are in correct position when zooming and reduce timeline footprint
+v0.11.7: increase spacing between time and timeline in replay view
+v0.11.8: fix plum detected quakes showing as m1.0, depth 10km
+v0.11.9: auto hide stations on auto past quake view
+v0.11.10: fix region colouring not clearing after eew
+v0.11.11: colour regions by max station intensity when a report has no area intensities
+v0.12.0: fix incorrect wave position when map panning
+v0.12.1: fix tsunami info persistance
+v0.12.2: fix wave pausing
+v0.12.3: fix replay prematurely showing quake data
+v0.12.4: add /ja endpoint for japanese search engine crawling
+v0.12.5: add discord button
+v0.12.6: fix discord button positioning
+v0.12.7: add image rendering for discord embed
+v0.12.8: epicentre always on top and add 𝕏 button
+v0.12.9: actually fix epicentre stacking
+v0.12.10: fix plum detection and cancelled warnings and add flash report detection
+v0.13.0: improve tsunami info accuracy
+v0.13.1: add lpgm info to live quakes
+
+v1.0.0: WebQuake stable release

@@ -1,0 +1,31 @@
+# Secrets — never commit a filled-in environment file.
+.env
+.env.*
+!.env.example
+
+# Runtime artifacts. All of these are recreated on first start, so a fresh
+# clone needs none of them.
+*.db
+*.db-wal
+*.db-shm
+logs/
+data_messages/
+decoded_messages/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code local settings (machine-specific paths)
+.claude/settings.local.json

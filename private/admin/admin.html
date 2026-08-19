@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebQuake Admin</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #0f1115;
+        color: #e6e6e6;
+        padding: 1.5rem;
+    }
+    header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1.5rem;
+    }
+    h1 { margin: 0; font-size: 1.4rem; }
+    a.logout { color: #888; text-decoration: none; font-size: 0.9rem; }
+    a.logout:hover { color: #f87171; }
+
+    section {
+        background: #1a1d24;
+        border-radius: 8px;
+        padding: 1.25rem;
+        margin-bottom: 1.25rem;
+    }
+    section h2 {
+        margin: 0 0 1rem;
+        font-size: 1.05rem;
+        color: #9ab4ff;
+    }
+
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+    .stat {
+        background: #0f1115;
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        text-align: center;
+    }
+    .stat .value { font-size: 1.6rem; font-weight: 700; }
+    .stat .label { font-size: 0.8rem; color: #999; margin-top: 0.25rem; }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+        margin-bottom: 0.75rem;
+    }
+    th, td {
+        text-align: left;
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid #2a2d36;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 220px;
+    }
+    th { color: #9ab4ff; font-weight: 600; }
+    tr:hover td { background: #20242e; }
+
+    .empty { color: #666; font-style: italic; padding: 0.5rem 0; }
+
+    .btn-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    button {
+        padding: 0.55rem 1rem;
+        border: none;
+        border-radius: 5px;
+        background: #3b82f6;
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+    button:hover { background: #2563eb; }
+    button:disabled { background: #444; cursor: wait; }
+    button.danger { background: #dc2626; }
+    button.danger:hover { background: #b91c1c; }
+
+    .result { font-size: 0.85rem; margin-top: 0.5rem; }
+    .result.ok { color: #4ade80; }
+    .result.err { color: #f87171; }
+
+    details { margin-bottom: 0.5rem; }
+    summary {
+        cursor: pointer;
+        font-weight: 600;
+        padding: 0.4rem 0;
+        color: #ddd;
+    }
+    summary .count { color: #9ab4ff; font-weight: 400; margin-left: 0.5rem; }
+
+    .controls { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+    select {
+        background: #0f1115;
+        color: #e6e6e6;
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 0.4rem 0.6rem;
+    }
+    .updated { color: #666; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<header>
+    <h1>WebQuake Admin</h1>
+    <a class="logout" href="/admin/logout">Log out</a>
+</header>
+
+<section>
+    <h2>Live Status</h2>
+    <div class="stat-grid" id="status-grid"></div>
+    <div id="active-eew"></div>
+    <div id="active-tsunami"></div>
+    <div id="active-past-quake"></div>
+    <div class="updated" id="status-updated"></div>
+</section>
+
+<section>
+    <h2>48-Hour Replay</h2>
+    <p style="color:#999; font-size:0.85rem; margin-top:0;">
+        Every broadcast message is logged to the <code>history_log</code> table and pruned after 48 hours, powering the frontend's scrollable timeline/scrubbing feature.
+    </p>
+    <div class="stat-grid" id="history-grid"></div>
+</section>
+
+<section>
+    <h2>Replay Cache (RAM)</h2>
+    <p style="color:#999; font-size:0.85rem; margin-top:0;">
+        An in-memory mirror of <code>history_log</code> that serves replay reads without hitting SQLite, so many
+        concurrent replay viewers don't contend with the live write path. Rebuilt from SQLite on every restart
+        (the cache itself is volatile); disable via <code>HISTORY_CACHE_ENABLED</code> in <code>main.py</code> on
+        memory-constrained servers.
+    </p>
+    <div class="stat-grid" id="cache-grid"></div>
+</section>
+
+<section>
+    <h2>Test Push Notifications</h2>
+    <p style="color:#999; font-size:0.85rem; margin-top:0;">
+        These send <strong>real OneSignal push notifications</strong> to subscribed devices, prefixed with "[TEST]".
+    </p>
+    <div class="btn-row">
+        <button data-kind="warning">Send Test EEW Warning</button>
+        <button data-kind="forecast">Send Test EEW Forecast</button>
+        <button data-kind="tsunami">Send Test Tsunami Info</button>
+    </div>
+    <div class="result" id="notif-result"></div>
+
+    <h2>Test ntfy Notifications</h2>
+    <p style="color:#999; font-size:0.85rem; margin-top:0;">
+        These send <strong>real ntfy notifications</strong> to both the EN and JA topics, prefixed with "[TEST]".
+    </p>
+    <div class="btn-row">
+        <button data-ntfy-kind="warning">Send Test EEW Warning</button>
+        <button data-ntfy-kind="forecast">Send Test EEW Forecast</button>
+        <button data-ntfy-kind="tsunami">Send Test Tsunami Info</button>
+    </div>
+    <div class="result" id="ntfy-notif-result"></div>
+
+    <h2>Test Discord Notifications</h2>
+    <p style="color:#999; font-size:0.85rem; margin-top:0;">
+        These send <strong>real Discord webhook notifications</strong> to the EN and JA channels, prefixed with "[TEST]".
+        Warning/Forecast also attach a sample rendered map image and attempt to crosspost (publish) the message.
+    </p>
+    <div class="btn-row">
+        <button data-discord-kind="warning">Send Test EEW Warning</button>
+        <button data-discord-kind="forecast">Send Test EEW Forecast</button>
+        <button data-discord-kind="tsunami">Send Test Tsunami Info</button>
+    </div>
+    <div class="result" id="discord-notif-result"></div>
+</section>
+
+<section>
+    <h2>Recently Received Data</h2>
+    <div class="controls">
+        <label for="hours">Time window:</label>
+        <select id="hours">
+            <option value="1">Last hour</option>
+            <option value="6">Last 6 hours</option>
+            <option value="24" selected>Last 24 hours</option>
+            <option value="168">Last 7 days</option>
+            <option value="720">Last 30 days</option>
+        </select>
+        <button id="refresh-recent">Refresh</button>
+        <span class="updated" id="recent-updated"></span>
+    </div>
+    <h3 style="margin: 0 0 0.5rem; font-size: 0.95rem; color: #ddd;">Raw telegram counts</h3>
+    <table id="file-counts-table"></table>
+    <h3 style="margin: 1rem 0 0.5rem; font-size: 0.95rem; color: #ddd;">Decoded records by type</h3>
+    <div id="tables-container"></div>
+</section>
+
+<script>
+const TABLE_DESCRIPTIONS = {
+    VXSE43: 'EEW Warning (intensity 5- and above)',
+    VXSE45: 'EEW Forecast (below intensity 5-)',
+    VXSE47: 'PLUM real-time intensity',
+    VXSE51: 'Earthquake intensity report',
+    VXSE52: 'Earthquake epicenter info',
+    VXSE53: 'Earthquake epicenter + intensity info',
+    VTSE41: 'Tsunami warning/advisory/forecast',
+    VTSE51: 'Tsunami observation info',
+    VTSE52: 'Offshore tsunami observation (no DB table)',
+};
+
+function fmtTime(ts) {
+    if (!ts) return '-';
+    const d = new Date(ts * 1000);
+    return d.toLocaleString('en-GB', { timeZone: 'Asia/Tokyo', hour12: false }) + ' JST';
+}
+
+function fmtRelative(ts) {
+    if (!ts) return '-';
+    const diff = Math.floor(Date.now() / 1000) - ts;
+    if (diff < 60) return diff.toFixed(3) + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+}
+
+function fmtBytes(bytes) {
+    if (!bytes) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    while (bytes >= 1024 && i < units.length - 1) {
+        bytes /= 1024;
+        i++;
+    }
+    return bytes.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+async function loadStatus() {
+    const res = await fetch('/api/admin/status');
+    if (res.status === 401) { window.location.href = '/admin/login'; return; }
+    const data = await res.json();
+
+    const stats = [
+        { label: 'Open WebSocket clients', value: data.open_sockets },
+        { label: 'Active EEW events', value: data.recent_earthquake_data.length },
+        { label: 'NIED stations cached', value: data.nied_station_count },
+        { label: 'S-net stations cached', value: data.snet_station_count },
+        { label: 'JMA history entries', value: data.jma_history_count },
+    ];
+    document.getElementById('status-grid').innerHTML = stats.map(s =>
+        `<div class="stat"><div class="value">${s.value}</div><div class="label">${s.label}</div></div>`
+    ).join('');
+
+    const coverageSecs = data.history_log_oldest_ts ? Math.floor(Date.now() / 1000) - data.history_log_oldest_ts : 0;
+    const coverageHrs = (coverageSecs / 3600).toFixed(1);
+    const historyStats = [
+        { label: 'Replay log entries', value: data.history_log_count },
+        { label: 'Coverage', value: data.history_log_oldest_ts ? coverageHrs + 'h' : '-' },
+        { label: 'Oldest entry', value: fmtRelative(data.history_log_oldest_ts) },
+        { label: 'Newest entry', value: fmtRelative(data.history_log_newest_ts) },
+        { label: 'Storage used', value: fmtBytes(data.history_log_size_bytes) },
+    ];
+    document.getElementById('history-grid').innerHTML = historyStats.map(s =>
+        `<div class="stat"><div class="value">${s.value}</div><div class="label">${s.label}</div></div>`
+    ).join('');
+
+    let cacheStatus;
+    if (!data.history_cache_enabled) {
+        cacheStatus = 'Disabled';
+    } else if (data.history_cache_load_error) {
+        cacheStatus = 'Failed (SQLite fallback)';
+    } else if (data.history_cache_ready) {
+        cacheStatus = 'Ready';
+    } else {
+        cacheStatus = 'Loading...';
+    }
+    const cacheStats = [
+        { label: 'Status', value: cacheStatus },
+        { label: 'Cached entries', value: data.history_cache_enabled ? data.history_cache_row_count : '-' },
+        { label: 'RAM used (est.)', value: data.history_cache_enabled ? fmtBytes(data.history_cache_size_bytes) : '-' },
+        { label: 'Migration time', value: data.history_cache_load_seconds != null ? data.history_cache_load_seconds.toFixed(2) + 's' : '-' },
+        { label: 'Last loaded', value: fmtRelative(data.history_cache_loaded_at) },
+    ];
+    document.getElementById('cache-grid').innerHTML = cacheStats.map(s =>
+        `<div class="stat"><div class="value">${s.value}</div><div class="label">${s.label}</div></div>`
+    ).join('');
+    if (data.history_cache_load_error) {
+        document.getElementById('cache-grid').innerHTML += `<div class="empty" style="color:#ff8080; grid-column: 1 / -1;">Migration error: ${data.history_cache_load_error}</div>`;
+    }
+
+    const eewEl = document.getElementById('active-eew');
+    if (data.recent_earthquake_data.length) {
+        eewEl.innerHTML = '<table><thead><tr><th>Event ID</th><th>Type</th><th>Location</th><th>Max Int</th><th>Mag</th><th>Report #</th><th>Last?</th><th>Report time</th></tr></thead><tbody>' +
+            data.recent_earthquake_data.map(ev => `<tr>
+                <td>${ev.event_id || ev.key || '-'}</td>
+                <td>${ev.is_plum ? 'PLUM' : (ev.warning ? 'Warning' : 'Forecast')}</td>
+                <td>${(ev.epi_location_en || []).join(', ') || '-'}</td>
+                <td>${ev.max_int ?? '-'}</td>
+                <td>${ev.magnitude ?? '-'}</td>
+                <td>${ev.report_num ?? '-'}</td>
+                <td>${ev.last_report ? 'Yes' : 'No'}</td>
+                <td>${fmtTime(ev.report_time)}</td>
+            </tr>`).join('') + '</tbody></table>';
+    } else {
+        eewEl.innerHTML = '<div class="empty">No active EEW events</div>';
+    }
+
+    const tsunamiEl = document.getElementById('active-tsunami');
+    if (data.recent_tsunami_data) {
+        const t = data.recent_tsunami_data;
+        tsunamiEl.innerHTML = `<div class="empty" style="color:#9ab4ff; font-style:normal;">
+            Active tsunami: <strong>${t.warning_level}</strong> — regions: ${(t.regions_en || []).join(', ') || '-'} (reported ${fmtTime(t.report_time)})
+        </div>`;
+    } else {
+        tsunamiEl.innerHTML = '<div class="empty">No active tsunami warning</div>';
+    }
+
+    const pastEl = document.getElementById('active-past-quake');
+    if (data.recent_past_quake_data) {
+        const p = data.recent_past_quake_data;
+        pastEl.innerHTML = `<div class="empty" style="color:#9ab4ff; font-style:normal;">
+            Recent past quake: ${(p.epi_location_en || []).join(', ') || '-'}, max int ${p.max_int ?? '-'}, mag ${p.magnitude ?? '-'} (reported ${fmtTime(p.report_time)})
+        </div>`;
+    } else {
+        pastEl.innerHTML = '<div class="empty">No recent post-event report</div>';
+    }
+
+    document.getElementById('status-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+async function loadRecent() {
+    const hours = document.getElementById('hours').value;
+    const res = await fetch('/api/admin/recent?hours=' + hours);
+    if (res.status === 401) { window.location.href = '/admin/login'; return; }
+    const data = await res.json();
+
+    const fcRows = Object.entries(data.file_counts).map(([type, c]) => `<tr>
+        <td>${type}</td>
+        <td>${TABLE_DESCRIPTIONS[type] || ''}</td>
+        <td>${c.recent}</td>
+        <td>${c.total}</td>
+        <td>${c.latest ? fmtRelative(c.latest) : 'never'}</td>
+    </tr>`).join('');
+    document.getElementById('file-counts-table').innerHTML =
+        '<thead><tr><th>Type</th><th>Description</th><th>In window</th><th>Total ever</th><th>Latest</th></tr></thead><tbody>' + fcRows + '</tbody>';
+
+    const container = document.getElementById('tables-container');
+    container.innerHTML = '';
+    for (const [table, rows] of Object.entries(data.tables)) {
+        const details = document.createElement('details');
+        if (rows.length) details.open = false;
+        const summary = document.createElement('summary');
+        summary.innerHTML = `${table} — ${TABLE_DESCRIPTIONS[table] || ''} <span class="count">(${rows.length} in window)</span>`;
+        details.appendChild(summary);
+
+        if (!rows.length) {
+            const empty = document.createElement('div');
+            empty.className = 'empty';
+            empty.textContent = 'No records in this window';
+            details.appendChild(empty);
+        } else {
+            const cols = Object.keys(rows[0]);
+            const tbl = document.createElement('table');
+            const thead = '<thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead>';
+            const tbody = '<tbody>' + rows.map(r => '<tr>' + cols.map(c => {
+                let v = r[c];
+                if ((c === 'report_time' || c === 'quake_time') && v) v = fmtTime(v);
+                if (v === null || v === undefined) v = '-';
+                return `<td title="${String(v).replace(/"/g, '&quot;')}">${v}</td>`;
+            }).join('') + '</tr>').join('') + '</tbody>';
+            tbl.innerHTML = thead + tbody;
+            details.appendChild(tbl);
+        }
+        container.appendChild(details);
+    }
+
+    document.getElementById('recent-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+document.getElementById('refresh-recent').addEventListener('click', loadRecent);
+document.getElementById('hours').addEventListener('change', loadRecent);
+
+document.querySelectorAll('[data-kind]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const kind = btn.dataset.kind;
+        if (!confirm(`Send a real "[TEST]" push notification (${kind}) to all subscribed devices?`)) return;
+        const resultEl = document.getElementById('notif-result');
+        document.querySelectorAll('[data-kind]').forEach(b => b.disabled = true);
+        resultEl.textContent = 'Sending...';
+        resultEl.className = 'result';
+        try {
+            const res = await fetch('/api/admin/test_notification', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                resultEl.textContent = `Sent (${kind}) — OneSignal notification id: ${data.id}`;
+                resultEl.className = 'result ok';
+            } else {
+                resultEl.textContent = `Failed (${kind}): ${data.error}`;
+                resultEl.className = 'result err';
+            }
+        } catch (err) {
+            resultEl.textContent = 'Request failed: ' + err;
+            resultEl.className = 'result err';
+        } finally {
+            document.querySelectorAll('[data-kind]').forEach(b => b.disabled = false);
+        }
+    });
+});
+
+document.querySelectorAll('[data-ntfy-kind]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const kind = btn.dataset.ntfyKind;
+        if (!confirm(`Send a real "[TEST]" ntfy notification (${kind}) to the EN and JA topics?`)) return;
+        const resultEl = document.getElementById('ntfy-notif-result');
+        document.querySelectorAll('[data-ntfy-kind]').forEach(b => b.disabled = true);
+        resultEl.textContent = 'Sending...';
+        resultEl.className = 'result';
+        try {
+            const res = await fetch('/api/admin/test_ntfy_notification', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                resultEl.textContent = `Sent (${kind}) to EN and JA topics`;
+                resultEl.className = 'result ok';
+            } else {
+                resultEl.textContent = `Failed (${kind}): EN=${data.en.ok ? 'ok' : data.en.error}, JA=${data.ja.ok ? 'ok' : data.ja.error}`;
+                resultEl.className = 'result err';
+            }
+        } catch (err) {
+            resultEl.textContent = 'Request failed: ' + err;
+            resultEl.className = 'result err';
+        } finally {
+            document.querySelectorAll('[data-ntfy-kind]').forEach(b => b.disabled = false);
+        }
+    });
+});
+
+document.querySelectorAll('[data-discord-kind]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const kind = btn.dataset.discordKind;
+        if (!confirm(`Send a real "[TEST]" Discord notification (${kind}) to the EN and JA channels?`)) return;
+        const resultEl = document.getElementById('discord-notif-result');
+        document.querySelectorAll('[data-discord-kind]').forEach(b => b.disabled = true);
+        resultEl.textContent = 'Sending...';
+        resultEl.className = 'result';
+        try {
+            const res = await fetch('/api/admin/test_discord_notification', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+                resultEl.textContent = `Sent (${kind}) to EN and JA channels`;
+                resultEl.className = 'result ok';
+            } else {
+                resultEl.textContent = `Failed (${kind}): EN=${data.en.ok ? 'ok' : data.en.error}, JA=${data.ja.ok ? 'ok' : data.ja.error}`;
+                resultEl.className = 'result err';
+            }
+        } catch (err) {
+            resultEl.textContent = 'Request failed: ' + err;
+            resultEl.className = 'result err';
+        } finally {
+            document.querySelectorAll('[data-discord-kind]').forEach(b => b.disabled = false);
+        }
+    });
+});
+
+loadStatus();
+loadRecent();
+setInterval(loadStatus, 5000);
+</script>
+</body>
+</html>
