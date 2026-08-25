@@ -632,6 +632,17 @@ def _extract_and_store_stations(event_id, data):
         if changed:
             _invalidate_quake_points_index()
 
+volcanic_origin_event_ids = set() # event_ids identified as volcanic-eruption-triggered "distant earthquake" reports, not real earthquakes
+
+def _is_volcanic_origin_report(data):
+    """VXSE53 reuses the "distant earthquake" (遠地地震に関する情報) template for tsunami
+    advisories triggered by a volcanic eruption rather than an earthquake, leaving magnitude/
+    depth unset. JMA's free-text comment is the only field that reliably says so (it explicitly
+    disclaims the auto-generated "large earthquake overseas" headline in this case)."""
+    free_text = data.get('body', {}).get('body', {}).get('comments', {}).get('free', '') or ''
+    return '噴火' in free_text
+
+
 def process_data(data): # Extracts the relevant information from the data
     output_data = {}
     if data['head']['type'] == 'VXSE53': # Earthquake information (information regarding the epicenter and intensity)
@@ -2145,6 +2156,8 @@ def poll_jma_quake_history():
                         fallback = _max_station_intensity(q.get('ctt'))
                         if fallback:
                             q['maxi'] = fallback
+                    if q.get('ctt') in volcanic_origin_event_ids:
+                        q['is_volcanic'] = True
                 top_at = deduped[0].get('at') if deduped else None
                 # Re-broadcast/cache not just when a new quake appears, but whenever any
                 # entry's maxi changes (e.g. JMA or our station fallback fills it in on a

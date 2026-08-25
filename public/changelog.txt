@@ -58,3 +58,4 @@ v0.13.0: improve tsunami info accuracy
 v0.13.1: add lpgm info to live quakes
 
 v1.0.0: WebQuake stable release
+v1.0.1: fix volcanic eruptions showing as quakes with unknown info

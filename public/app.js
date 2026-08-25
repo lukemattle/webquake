@@ -1,4 +1,4 @@
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.0.1';
 
 // ── OneSignal push notifications ────────────────────────────────────
 const NOTIF_LANG_KEY = 'webquake_notif_lang';
@@ -2074,6 +2074,7 @@ function normalizeJmaCandidate(q, isJa) {
         intensity: (q.maxi && q.maxi !== '0') ? q.maxi : null,
         depth: parseQuakeDepth(q.cod),
         mag: q.mag ?? null,
+        is_volcanic: !!q.is_volcanic,
         loc: (isJa ? q.anm : (q.en_anm || '').replace(/ Prefecture/gi, '').replace(/ Pref\./gi, '')) || q.anm || null,
         at: q.at,
         lat: null, lon: null,
@@ -2086,6 +2087,7 @@ function normalizeWsCandidate(ws) {
         intensity: (ws.max_int && ws.max_int !== '0') ? ws.max_int : null,
         depth: ws.depth ?? null,
         mag: ws.magnitude ?? null,
+        is_volcanic: !!ws.is_volcanic,
         loc: (currentLanguage === 'ja' ? ws.loc_jp : ws.loc_en) || null,
         at: ws.quake_time ? new Date(ws.quake_time * 1000).toISOString() : null,
         lat: ws.lat ?? null, lon: ws.lon ?? null,
@@ -2176,12 +2178,15 @@ function renderSidebar(quakes) {
         const mag   = fMag.value;
         const depth = fDepth.value;
         const depthLabel = fieldLabels.depth;
+        const isVolcanic = priorityList.some(c => c.is_volcanic);
         const depthPart = depth != null
             ? `&ensp;${depthLabel}: <b>${depth} km</b>`
             : mag != null ? `&ensp;<span title="${unknownTip}">${depthLabel}: <b>?</b></span>` : '';
-        const magStr = mag != null
-            ? `<b>M ${mag}</b>${depthPart}`
-            : `<span title="${unknownTip}">–</span>`;
+        const magStr = isVolcanic
+            ? `<b>${isJa ? '火山噴火' : 'Volcanic Eruption'}</b>`
+            : mag != null
+                ? `<b>M ${mag}</b>${depthPart}`
+                : `<span title="${unknownTip}">–</span>`;
         const badgeHtml = badge === '?'
             ? `<div class="quake-int-badge" style="background:${bg};color:${fg}" title="${unknownTip}">${badge}</div>`
             : `<div class="quake-int-badge" style="background:${bg};color:${fg}">${badge}</div>`;
