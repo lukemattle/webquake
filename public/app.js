@@ -522,6 +522,7 @@ function reapplyDataSourceFilter() {
     scheduleRedrawSnetStations();
     scheduleRedrawTwStations();
     scheduleRedrawJmaStations();
+    scheduleRedrawTwPtsStations();
     applyEpicenterVisibility();
     renderEewPanels();
     // Seismic wave circles (P/S-wave animation) self-correct on the next
@@ -1294,6 +1295,101 @@ function applyTwStationsDiff(changed, removed) {
 resizeTwStationCanvas();
 map.on('resize', () => { resizeTwStationCanvas(); scheduleRedrawTwStations(); });
 map.on('move zoom', scheduleRedrawTwStations);
+
+// ── Taiwan/CWA past-quake station dots (own canvas, mirrors jmaCanvas below) ──
+// CWA reports carry a full per-station intensity list (Intensity.ShakingArea[].
+// EqStation[]), stored server-side in tw_quake_stations and exposed via
+// /api/tw_quake_points/<earthquake_no> - this renders that snapshot when a
+// sidebar history entry is opened, same as jmaStations does for JMA's
+// /api/quake_points/<event_id>. Kept as its own canvas/state rather than
+// reusing jmaCanvas/jmaStations because those gate on showJapan(), which
+// would wrongly hide Taiwan station dots in "Taiwan only" mode.
+let twPtsStations = [];
+let _twPtsSorted = [];
+let twPtsStationsEventId = null; // the earthquake_no currently shown, or null
+let twPtsStationsVisible = false;
+let _twPtsClearTimer = null;
+
+const twPtsCanvas = document.createElement('canvas');
+twPtsCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:453;';
+map.getContainer().appendChild(twPtsCanvas);
+
+function resizeTwPtsCanvas() {
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    twPtsCanvas.width  = sz.x * dpr;
+    twPtsCanvas.height = sz.y * dpr;
+    twPtsCanvas.style.width  = sz.x + 'px';
+    twPtsCanvas.style.height = sz.y + 'px';
+}
+
+function redrawTwPtsStations() {
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = twPtsCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, sz.x, sz.y);
+    if (!showTaiwan() || !twPtsStationsVisible || !twPtsStations.length) return;
+    const z    = map.getZoom();
+    const base = Math.max(7, Math.min(22, Math.round(z * 2)));
+    const r    = base / 2;
+    _twPtsSorted.forEach(st => {
+        const pt = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
+        if (pt.x < -base || pt.y < -base || pt.x > sz.x + base || pt.y > sz.y + base) return;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = intColor(st.int);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        if (base >= 12) {
+            const lbl = st.int || '';
+            const fs = lbl.length > 1 ? base * 0.5 : base * 0.68;
+            ctx.font = `700 ${fs}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = intTextColor(st.int);
+            ctx.fillText(lbl, pt.x, pt.y);
+        }
+    });
+}
+
+let _redrawTwPtsPending = false;
+function scheduleRedrawTwPtsStations() {
+    if (_redrawTwPtsPending) return;
+    _redrawTwPtsPending = true;
+    requestAnimationFrame(() => { _redrawTwPtsPending = false; redrawTwPtsStations(); });
+}
+
+resizeTwPtsCanvas();
+map.on('resize', () => { resizeTwPtsCanvas(); scheduleRedrawTwPtsStations(); });
+map.on('move zoom', scheduleRedrawTwPtsStations);
+
+function clearTwPtsStations() {
+    twPtsStations = [];
+    twPtsStationsEventId = null;
+    twPtsStationsVisible = false;
+    if (_twPtsClearTimer) { clearTimeout(_twPtsClearTimer); _twPtsClearTimer = null; }
+    redrawTwPtsStations();
+}
+
+async function fetchTwPoints(earthquakeNo) {
+    if (!earthquakeNo) return;
+    try {
+        const resp = await fetch(`/api/tw_quake_points/${encodeURIComponent(earthquakeNo)}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.stations || !data.stations.length) return;
+        twPtsStations = data.stations;
+        for (const st of twPtsStations) if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+        _twPtsSorted = [...twPtsStations].sort((a, b) => intRank(a.int) - intRank(b.int));
+        twPtsStationsEventId = earthquakeNo;
+        twPtsStationsVisible = true;
+        resizeTwPtsCanvas();
+        redrawTwPtsStations();
+    } catch(e) { console.warn('TW points fetch failed', e); }
+}
 
 // ── JMA station dots (past quake point data) ─────────────────────────
 let jmaStations = [];
@@ -2303,41 +2399,6 @@ function buildTwEewCard(data) {
     return div;
 }
 
-// Taiwan/CWA post-event report card — mirrors buildEewCard's shape but reads
-// tw_earthquake's flat field layout (location/magnitude/depth/stations) and
-// derives its intensity box from the per-station max rather than a carried
-// max_int, since CWA reports don't include one directly.
-function twQuakeReportTime(data) {
-    if (typeof data.origin_time === 'number') return formatCwaTime(data.origin_time);
-    if (typeof data.origin_time === 'string') {
-        const t = Date.parse(data.origin_time);
-        if (!isNaN(t)) return formatCwaTime(t);
-    }
-    return '–';
-}
-
-function buildTwQuakeCard(data) {
-    let maxInt = null;
-    if (Array.isArray(data.stations)) {
-        for (const st of data.stations) {
-            if (st.int == null) continue;
-            if (maxInt == null || intRank(st.int) > intRank(maxInt)) maxInt = st.int;
-        }
-    }
-    const div = document.createElement('div');
-    div.className = 'eew-card';
-    div.innerHTML =
-        `<div class="eew-type"><span class="en">Taiwan Earthquake Report</span><span class="ja">台湾地震情報</span>` +
-            (data.earthquake_no != null ? `  #${data.earthquake_no}` : '') +
-            ` <span class="quake-source quake-source-cwa" style="font-size:0.85em">CWA</span>` +
-        `</div>` +
-        `<div class="eew-int-box" style="background:${maxInt != null ? intColor(maxInt) : '#555'};color:${maxInt != null ? intTextColor(maxInt) : '#aaa'}">${maxInt ?? '–'}</div>` +
-        `<div class="eew-location">${data.location || '–'}</div>` +
-        `<div class="eew-detail">M ${data.magnitude ?? '–'}  Depth ${data.depth != null ? data.depth + ' km' : '–'}</div>` +
-        `<div class="eew-time">${twQuakeReportTime(data)}</div>`;
-    return div;
-}
-
 // Mirrors placeAllEpicenters() for Taiwan EEWs — kept as its own function
 // (rather than merged into activeEews' iteration) since activeTwEews' data
 // shape (eq.lat/eq.lon nested, not flat) differs from JMA's.
@@ -2369,7 +2430,7 @@ function renderEewPanels() {
     const jpEews   = showJapan()  ? activeEews   : new Map();
     const twEews   = showTaiwan() ? activeTwEews : new Map();
     const twQuake  = (showTaiwan() && activeTwQuakeData) ? [activeTwQuakeData] : [];
-    if (jpEews.size === 0 && twEews.size === 0 && twQuake.length === 0) {
+    if (jpEews.size === 0 && twEews.size === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
         positionObsPanel();
@@ -2393,15 +2454,6 @@ function renderEewPanels() {
             container.appendChild(sep);
         }
         container.appendChild(buildTwEewCard(data));
-        first = false;
-    }
-    for (const data of twQuake) {
-        if (!first) {
-            const sep = document.createElement('div');
-            sep.className = 'eew-card-sep';
-            container.appendChild(sep);
-        }
-        container.appendChild(buildTwQuakeCard(data));
         first = false;
     }
     setLanguage(currentLanguage);
@@ -2891,20 +2943,59 @@ function renderQuakeHistory(quakes) {
 // like JMA's VXSE51->52->53 + live-telegram blending), and tw_history entries
 // already carry lat/lon directly, so "view on map" is a plain flyTo rather
 // than the replay/station-reconstruction machinery handleJmaMapBtn needs.
-let twSidebarActiveTs = null;
+// Keyed by earthquake_no (not ts) - ts is only origin-time precision (seconds)
+// and isn't guaranteed unique the way a JMA event_id string effectively is,
+// so ts was the wrong identity for this toggle.
+let twSidebarActiveKey = null;
 
 function handleTwMapBtn(q) {
-    if (twSidebarActiveTs === q.ts) {
-        twSidebarActiveTs = null;
+    if (twSidebarActiveKey === q.earthquake_no) {
+        twSidebarActiveKey = null;
+        clearTwPtsStations();
+        removeEpicenterMark('tw:pts');
+        if (liveStationsHidden) {
+            liveStationsHidden = false;
+            document.getElementById('obs-live-hidden').style.display = 'none';
+            redrawStations();
+            redrawTwStations();
+        }
         renderSidebar(lastQuakeData);
         map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
         return;
     }
-    twSidebarActiveTs = q.ts;
+    twSidebarActiveKey = q.earthquake_no;
     renderSidebar(lastQuakeData);
     if (q.lat != null && q.lon != null) {
+        placeMarker('tw:pts', q.lat, q.lon);
         map.flyTo([q.lat, q.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
     }
+    // CWA reports carry a full per-station intensity list - show it, hiding
+    // live station dots the same way viewing a JMA past quake already does,
+    // so the map reads as "this report's snapshot" rather than mixing in
+    // whatever's currently live. Same banner JMA's equivalent view shows,
+    // explaining why the live dots disappeared.
+    liveStationsHidden = true;
+    document.getElementById('obs-live-hidden').style.display = 'block';
+    document.getElementById('obs-panel').classList.add('visible');
+    positionObsPanel();
+    redrawStations();
+    redrawTwStations();
+    fetchTwPoints(q.earthquake_no);
+    if (_twPtsClearTimer) clearTimeout(_twPtsClearTimer);
+    _twPtsClearTimer = setTimeout(() => {
+        _twPtsClearTimer = null;
+        if (twSidebarActiveKey === q.earthquake_no) {
+            twSidebarActiveKey = null;
+            clearTwPtsStations();
+            removeEpicenterMark('tw:pts');
+            liveStationsHidden = false;
+            document.getElementById('obs-live-hidden').style.display = 'none';
+            redrawStations();
+            redrawTwStations();
+            renderSidebar(lastQuakeData);
+            map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
+        }
+    }, 180000);
 }
 
 function buildTwHistoryEntry(q, isJa) {
@@ -2931,7 +3022,7 @@ function buildTwHistoryEntry(q, isJa) {
 
     const mapPin = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="13" viewBox="0 0 11 13" fill="currentColor"><path d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.38 4.5 8.5 4.5 8.5s4.5-5.12 4.5-8.5C10 2.02 7.98 0 5.5 0zm0 6.1a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/></svg>';
     const hasCoords = q.lat != null && q.lon != null;
-    const mapActive = hasCoords && twSidebarActiveTs === q.ts;
+    const mapActive = hasCoords && twSidebarActiveKey === q.earthquake_no;
     const mapBtnHtml = hasCoords
         ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? (isJa ? '地図から隠す' : 'Hide on map') : (isJa ? '地図に表示' : 'Show on map')}">${mapActive ? '✕' : mapPin}</button>`
         : '';
@@ -3225,7 +3316,6 @@ function displayData(data) {
         } else {
             resetTwRegionColors();
         }
-        renderEewPanels();
         if (data.lat != null && data.lon != null) {
             placeMarker('__tw_past__', data.lat, data.lon);
             if (showTaiwan() && !hasRyukyuActivity()) {
@@ -3237,7 +3327,6 @@ function displayData(data) {
         dismissTwQuakePopup();
         removeEpicenterMark('__tw_past__');
         resetTwRegionColors();
-        renderEewPanels();
     } else if (data.type === 'tw_eew') {
         // Live Taiwan EEW, sourced from ExpTech's eq/eew feed (CWA has no public
         // live push — see plan notes). Schema fields (author/serial/eq.{time,loc,
