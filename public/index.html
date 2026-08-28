@@ -140,8 +140,12 @@
 <!-- Earthquake history sidebar -->
 <div id="quake-sidebar">
     <div id="quake-sidebar-header">
-        <span class="en">Earthquake History</span>
-        <span class="ja">地震履歴</span>
+        <span class="quake-sidebar-title"><span class="en">Earthquake History</span><span class="ja">地震履歴</span></span>
+        <span class="lang-seg">
+            <button type="button" class="lang-seg-btn" id="sb-filter-both" onclick="setSidebarFilter('both')" title="Both">Both</button>
+            <button type="button" class="lang-seg-btn" id="sb-filter-jp" onclick="setSidebarFilter('jp')" title="Japan only">JP</button>
+            <button type="button" class="lang-seg-btn" id="sb-filter-tw" onclick="setSidebarFilter('tw')" title="Taiwan only">TW</button>
+        </span>
     </div>
     <div id="quake-sidebar-list"></div>
 </div>

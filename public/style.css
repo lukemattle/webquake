@@ -67,8 +67,11 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
 #quake-sidebar-header {
     padding: 7px 10px 7px 12px; font-size: 0.75em; color: #888;
     border-bottom: 1px solid #2a2a2a; display: flex; align-items: center;
+    justify-content: space-between; gap: 6px;
     flex-shrink: 0; white-space: nowrap; overflow: hidden;
 }
+.quake-sidebar-title { overflow: hidden; text-overflow: ellipsis; }
+#quake-sidebar-header .lang-seg-btn { padding: 2px 6px; font-size: 0.95em; }
 #quake-sidebar-toggle {
     position: absolute; top: 6px; right: 258px; z-index: 1002;
     background: rgba(15,15,15,0.93); border: none; border-right: none; color: #aaa;
@@ -85,6 +88,7 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     text-decoration: none; color: inherit; cursor: pointer;
 }
 .quake-entry:hover { background: rgba(255,255,255,0.05); }
+.quake-entry-tw { box-shadow: inset 3px 0 0 rgba(45,212,191,0.6); }
 .quake-entry-active { background: rgba(255,200,50,0.08); box-shadow: inset 3px 0 0 #f5a623; }
 .quake-entry:first-child .quake-info { padding-top: 10px; }
 .quake-int-badge {

@@ -23,6 +23,41 @@ function setDataSourceFilter(mode) {
     localStorage.setItem(DATA_SOURCE_KEY, mode);
     updateDataSourceFilterUI();
     reapplyDataSourceFilter();
+    // Changing the global setting is a fresh decision - drop any standing
+    // sidebar-specific override so the sidebar goes back to following it.
+    sidebarFilterOverride = null;
+    try { localStorage.removeItem(SIDEBAR_FILTER_KEY); } catch(e) {}
+    updateSidebarFilterUI();
+    renderSidebar(lastQuakeData);
+}
+
+// ── Earthquake History sidebar filter (Both / JP / TW) ─────────────────
+// Independent of dataSourceFilter above (which gates the whole map/UI) -
+// this only filters which entries render in the #quake-sidebar list.
+// Defaults to following dataSourceFilter; a click on one of the sidebar's
+// own Both/JP/TW buttons sets an explicit override that sticks until the
+// global Data Source setting is changed again (see setDataSourceFilter).
+const SIDEBAR_FILTER_KEY = 'webquake_sidebar_filter';
+let sidebarFilterOverride = localStorage.getItem(SIDEBAR_FILTER_KEY) || null;
+
+function effectiveSidebarFilter() {
+    return sidebarFilterOverride || dataSourceFilter;
+}
+
+function updateSidebarFilterUI() {
+    const ids = { both: 'sb-filter-both', jp: 'sb-filter-jp', tw: 'sb-filter-tw' };
+    const eff = effectiveSidebarFilter();
+    for (const [mode, id] of Object.entries(ids)) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', eff === mode);
+    }
+}
+
+function setSidebarFilter(mode) {
+    sidebarFilterOverride = mode;
+    try { localStorage.setItem(SIDEBAR_FILTER_KEY, mode); } catch(e) {}
+    updateSidebarFilterUI();
+    renderSidebar(lastQuakeData);
 }
 
 // ── OneSignal push notifications ────────────────────────────────────
@@ -386,14 +421,15 @@ function _evalNiedWarning() {
 }
 setInterval(_evalNiedWarning, 1000);
 
+const CARTO_API_KEY = 'CARTO_KEY';
 const map = L.map('map', { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, zoomControl: false, preferCanvas: true });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_nolabels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/">OSM</a>',
     subdomains: 'abcd', maxZoom: 19
 }).addTo(map);
 map.createPane('japanLabels');
 map.getPane('japanLabels').style.zIndex = 250;
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
+L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
     subdomains: 'abcd', maxZoom: 19,
     pane: 'japanLabels',
     bounds: [[24, 122], [46, 147]]
@@ -956,6 +992,7 @@ const liveTwStationCache = new Map();
 // indefinitely after exitReplay.
 let liveQuakeHistory = null;
 let liveWsQuakeBuffer = null;
+let liveTwQuakeHistory = null; // mirrors liveQuakeHistory for lastTwHistoryData
 
 const stationCanvas = document.createElement('canvas');
 stationCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:450;';
@@ -1589,7 +1626,7 @@ map.getContainer().addEventListener('click', function(e) {
     const z  = map.getZoom();
 
     // Check S-net stations first (they're below NIED z-index but we check by proximity)
-    if (lastSnetStations.length) {
+    if (showJapan() && lastSnetStations.length) {
         const snetHitR = Math.max(5, Math.min(16, Math.round(z * 2 - 3))) / 2 + 4;
         let snetClosest = null, snetBest = Infinity;
         lastSnetStations.forEach(st => {
@@ -1607,7 +1644,7 @@ map.getContainer().addEventListener('click', function(e) {
 
     // Taiwan/ExpTech stations — geographically distinct from Japan's, so hit-testing
     // order relative to NIED doesn't matter, but checked here to sit alongside S-net.
-    if (lastTwStations.length && !liveStationsHidden) {
+    if (showTaiwan() && lastTwStations.length && !liveStationsHidden) {
         const twHitR = Math.max(6, Math.min(20, Math.round(z * 2 - 2))) / 2 + 4;
         let twClosest = null, twBest = Infinity;
         lastTwStations.forEach(st => {
@@ -2390,6 +2427,7 @@ function formatJst(unixSec) {
 // ── Language toggle ───────────────────────────────────────────────────
 let currentLanguage = 'en';
 let lastQuakeData = [];
+let lastTwHistoryData = []; // Taiwan/CWA equivalent of lastQuakeData, fed by tw_history
 const wsQuakeBuffer = new Map(); // quake_time (unix seconds) → ws entry
 
 function setLanguage(lang) {
@@ -2410,6 +2448,7 @@ function setLanguage(lang) {
 document.addEventListener('DOMContentLoaded', () => {
     setLanguage(window.__WEBQUAKE_LANG === 'ja' ? 'ja' : 'en');
     updateDataSourceFilterUI();
+    updateSidebarFilterUI();
     reapplyDataSourceFilter();
     loadTimelineMarkersAndGaps();
     // Fallback only — new quakes/tsunamis trigger an immediate refresh themselves (see displayData).
@@ -2491,6 +2530,8 @@ function createWebSocket() {
             (data.stations || []).forEach(s => liveTwStationCache.set(s.code, s));
         } else if (data.type === 'jma_history') {
             liveQuakeHistory = data.quakes;
+        } else if (data.type === 'tw_history') {
+            liveTwQuakeHistory = data.quakes;
         }
         if (replayActive) {
             replayLiveBuffer.push(data);
@@ -2579,6 +2620,7 @@ function addWsQuakeToSidebar(data) {
         max_int:    data.max_int    ?? existing.max_int    ?? '0',
         magnitude:  data.magnitude  ?? existing.magnitude  ?? null,
         depth:      data.depth      ?? existing.depth      ?? null,
+        is_volcanic: data.is_volcanic ?? existing.is_volcanic ?? false,
         loc_en:     (data.epi_location_en && data.epi_location_en[0]) || existing.loc_en || null,
         loc_jp:     (data.epi_location_jp && data.epi_location_jp[0]) || existing.loc_jp || null,
     });
@@ -2656,11 +2698,15 @@ function renderSidebar(quakes) {
     const wqStaticLabel = isJa ? 'WebQuake（速報データ）' : 'WebQuake (live telegram data)';
     const sourcesTitle  = isJa ? '情報の出典' : 'Data sources';
 
+    const sidebarFilter = effectiveSidebarFilter();
+    const renderItems = []; // { ts, el } — sorted newest-first before being appended
+
     // Cluster each WS (live telegram) entry with every JMA history entry that
     // describes the same earthquake (matched by event_id or within 90 s of origin time).
     // Unmatched JMA entries form their own single-candidate cluster.
     const usedJmaIdx = new Set();
     const clusters = [];
+    if (sidebarFilter !== 'tw') {
     for (const [wsKey, ws] of wsQuakeBuffer) {
         const jmaIdxs = [];
         quakes.forEach((q, idx) => {
@@ -2676,8 +2722,6 @@ function renderSidebar(quakes) {
         const ts = q.at ? Math.round(new Date(q.at).getTime() / 1000) : 0;
         clusters.push({ ws: null, jmaIdxs: [idx], ts });
     });
-
-    const renderItems = []; // { ts, el } — sorted newest-first before being appended
 
     clusters.forEach(cluster => {
         // JMA candidates take priority over WS, and among themselves the most recently
@@ -2825,6 +2869,13 @@ function renderSidebar(quakes) {
 
         renderItems.push({ ts: cluster.ts, el: a });
     });
+    } // sidebarFilter !== 'tw'
+
+    if (sidebarFilter !== 'jp') {
+        lastTwHistoryData.forEach(q => {
+            renderItems.push({ ts: q.ts, el: buildTwHistoryEntry(q, isJa) });
+        });
+    }
 
     renderItems.sort((a, b) => b.ts - a.ts);
     renderItems.forEach(({ el }) => list.appendChild(el));
@@ -2835,6 +2886,80 @@ function renderQuakeHistory(quakes) {
     renderSidebar(quakes);
 }
 
+// Taiwan/CWA sidebar entry - much simpler than buildEewCard's JMA equivalent
+// above: CWA publishes each report once (no revision staging to cluster/merge
+// like JMA's VXSE51->52->53 + live-telegram blending), and tw_history entries
+// already carry lat/lon directly, so "view on map" is a plain flyTo rather
+// than the replay/station-reconstruction machinery handleJmaMapBtn needs.
+let twSidebarActiveTs = null;
+
+function handleTwMapBtn(q) {
+    if (twSidebarActiveTs === q.ts) {
+        twSidebarActiveTs = null;
+        renderSidebar(lastQuakeData);
+        map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
+        return;
+    }
+    twSidebarActiveTs = q.ts;
+    renderSidebar(lastQuakeData);
+    if (q.lat != null && q.lon != null) {
+        map.flyTo([q.lat, q.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
+    }
+}
+
+function buildTwHistoryEntry(q, isJa) {
+    const maxi = q.max_int || '0';
+    const badge = maxi === '0' ? '?' : maxi;
+    const bg = intColor(maxi);
+    const fg = intTextColor(maxi);
+    const loc = q.location || '–';
+    const t = q.ts ? formatQuakeTime(new Date(q.ts * 1000).toISOString()) : '–';
+    const depthLabel = isJa ? '深さ' : 'Depth';
+    const depthPart = q.depth != null ? `&ensp;${depthLabel}: <b>${q.depth} km</b>` : '';
+    const magStr = q.magnitude != null ? `<b>M ${q.magnitude}</b>${depthPart}` : '<span>–</span>';
+    const badgeHtml = badge === '?'
+        ? `<div class="quake-int-badge" style="background:${bg};color:${fg}" title="${isJa ? 'CWAが詳細情報を公表していません。' : 'Detailed info not released (yet) by CWA.'}">${badge}</div>`
+        : `<div class="quake-int-badge" style="background:${bg};color:${fg}">${badge}</div>`;
+
+    const a = document.createElement('a');
+    const isActive = activeTwQuakeData && activeTwQuakeData.earthquake_no === q.earthquake_no;
+    a.className = 'quake-entry quake-entry-tw' + (isActive ? ' quake-entry-active' : '');
+
+    const cwaBtnHtml = q.web
+        ? `<a class="quake-jma-btn" href="${q.web}" target="_blank" rel="noopener noreferrer" title="Open on CWA website">CWA ↗</a>`
+        : `<span class="quake-source quake-source-cwa">CWA</span>`;
+
+    const mapPin = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="13" viewBox="0 0 11 13" fill="currentColor"><path d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.38 4.5 8.5 4.5 8.5s4.5-5.12 4.5-8.5C10 2.02 7.98 0 5.5 0zm0 6.1a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/></svg>';
+    const hasCoords = q.lat != null && q.lon != null;
+    const mapActive = hasCoords && twSidebarActiveTs === q.ts;
+    const mapBtnHtml = hasCoords
+        ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? (isJa ? '地図から隠す' : 'Hide on map') : (isJa ? '地図に表示' : 'Show on map')}">${mapActive ? '✕' : mapPin}</button>`
+        : '';
+
+    a.innerHTML =
+        badgeHtml +
+        `<div class="quake-info">` +
+        `<div class="quake-location" title="${loc}">${loc}</div>` +
+        `<div class="quake-time">` +
+        `<span>${t}</span>` +
+        `<div class="quake-time-btns">` + mapBtnHtml + `</div>` +
+        `</div>` +
+        `<div class="quake-mag">` +
+        `<span>${magStr}</span>` +
+        `<div class="quake-source-row">` + cwaBtnHtml + `</div>` +
+        `</div>` +
+        `</div>`;
+
+    if (hasCoords) {
+        a.querySelector('.quake-map-btn').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); handleTwMapBtn(q); collapseSidebarOnMobile(); });
+        a.addEventListener('click', e => {
+            if (e.target.closest('.quake-jma-btn') || e.target.closest('.quake-map-btn')) return;
+            handleTwMapBtn(q);
+            collapseSidebarOnMobile();
+        });
+    }
+    return a;
+}
 
 // ── Audio state ───────────────────────────────────────────────────────
 let jmaHistoryReceived = false; // suppresses a chime for the first (cached) jma_history snapshot on connect
@@ -3132,6 +3257,9 @@ function displayData(data) {
         }
     } else if (data.type === 'tw_eew_clear') {
         clearTwEewDisplay(data.key);
+    } else if (data.type === 'tw_history') {
+        lastTwHistoryData = data.quakes;
+        renderSidebar(lastQuakeData);
     }
 }
 
@@ -3332,6 +3460,7 @@ function exitReplay() {
     // Replay playback overwrites lastQuakeData/wsQuakeBuffer with historical
     // snapshots; restore the true live state before re-rendering the sidebar.
     if (liveQuakeHistory !== null) lastQuakeData = liveQuakeHistory;
+    if (liveTwQuakeHistory !== null) lastTwHistoryData = liveTwQuakeHistory;
     if (liveWsQuakeBuffer !== null) { wsQuakeBuffer.clear(); liveWsQuakeBuffer.forEach((v, k) => wsQuakeBuffer.set(k, v)); }
     liveWsQuakeBuffer = null;
     resetToNeutralState();
@@ -3573,4 +3702,3 @@ function onTimelinePlayPause() {
     if (!replayActive) { enterReplay(); return; }
     if (replayPlaying) pauseReplay(); else playReplay();
 }
-

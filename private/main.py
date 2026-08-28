@@ -17,6 +17,7 @@ mimetypes.add_type('application/geo+json', '.geojson')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 JST = timezone(timedelta(hours=9))
+TAIPEI = timezone(timedelta(hours=8))
 _station_lookup_path = os.path.join(BASE_DIR, 'jma-stations.json')
 with open(_station_lookup_path, encoding='utf-8') as _f:
     _station_lookup = {s['code']: s for s in json.load(_f)}
@@ -133,6 +134,10 @@ SITE_LINK_JA = f"{SITE_URL.rstrip('/')}/ja/" if SITE_URL else ""
 ADMIN_PASSWORD = _optional_env("WEBQUAKE_ADMIN_PASSWORD")
 ADMIN_ENABLED = bool(ADMIN_PASSWORD)
 ADMIN_DIR = os.path.join(BASE_DIR, 'admin')
+
+# --- Taiwan (CWA) config ---
+# CWA opendata requires a personal API key (https://opendata.cwa.gov.tw/user/authkey)
+CWA_API_KEY = os.environ.get("WEBQUAKE_CWA_API_KEY", "PUT_KEY_HERE")
 
 _check_required_env()
 
@@ -1236,6 +1241,38 @@ with db.Database() as cursor:
             value REAL
         )
     ''')
+    # Taiwan/CWA post-event reports - kept in their own tables rather than
+    # quake_epicenters/quake_stations, since those derive `timestamp` by
+    # parsing `event_id` as a JMA-format JST string; CWA's EarthquakeNo is a
+    # plain integer with its own OriginTime field, so there's no shared key.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tw_quake_epicenters (
+            earthquake_no INTEGER PRIMARY KEY,
+            lat REAL,
+            lon REAL,
+            depth REAL,
+            magnitude REAL,
+            location TEXT,
+            timestamp INTEGER,
+            web TEXT
+        )
+    ''')
+    try:
+        cursor.execute('ALTER TABLE tw_quake_epicenters ADD COLUMN web TEXT')
+    except Exception:
+        pass  # Column already exists
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tw_quake_stations (
+            earthquake_no INTEGER,
+            station_id TEXT,
+            name TEXT,
+            lat REAL,
+            lon REAL,
+            intensity TEXT,
+            PRIMARY KEY (earthquake_no, station_id)
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tw_qe_ts ON tw_quake_epicenters(timestamp)')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS history_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1501,7 +1538,7 @@ def _http_session() -> requests.Session:
         _http_local.session = s
     return s
 
-_HISTORY_THROTTLE_TYPES = {'nied_stations', 'nied_stations_diff', 'snet_stations', 'snet_stations_diff'}
+_HISTORY_THROTTLE_TYPES = {'nied_stations', 'nied_stations_diff', 'snet_stations', 'snet_stations_diff', 'exptech_stations', 'exptech_stations_diff'}
 _last_history_write: dict = {}  # msg_type -> last written ts, for throttled categories
 HISTORY_RETENTION_SECONDS = 48 * 3600
 # Live clients only ever get one full station snapshot (on connect) followed by
@@ -1928,6 +1965,390 @@ def poll_snet():
 threading.Thread(target=poll_snet, daemon=True).start()
 # --- end S-net polling ---
 
+# --- Taiwan: ExpTech TREM-Net live stations + live EEW, CWA earthquake reports ---
+# ExpTech (community sensor network, not an official source - see the "ExpTech"/
+# "TREM-Net" attribution badge in app.js) exposes REST endpoints, load-balanced
+# across lb-1..lb-4.exptech.dev, no auth required. Schemas below were confirmed
+# from ExpTech's own published @exptechtw/api-wrapper TypeScript types
+# (RtsStation.{pga,pgv,i,I,alert}; Eew.{author,id,serial,status,final,eq:{time,
+# lat,lon,depth,mag,loc,max}}), not guessed.
+EXPTECH_HOSTS = ['lb-1.exptech.dev', 'lb-2.exptech.dev', 'lb-3.exptech.dev', 'lb-4.exptech.dev']
+_exptech_host_idx = 0
+
+def _exptech_get(path, timeout=5):
+    """Round-robins ExpTech's load-balancer hosts, advancing to the next one
+    whenever a request fails so one bad host doesn't stall every poll cycle."""
+    global _exptech_host_idx
+    for _ in range(len(EXPTECH_HOSTS)):
+        host = EXPTECH_HOSTS[_exptech_host_idx % len(EXPTECH_HOSTS)]
+        try:
+            r = _http_session().get(f"https://{host}{path}", timeout=timeout)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        _exptech_host_idx += 1
+    return None
+
+_tw_stations_path = os.path.join(BASE_DIR, 'tw_stations.json')
+with open(_tw_stations_path, encoding='utf-8') as _f:
+    TW_STATIONS = json.load(_f)
+_tw_station_lookup = {s['code']: s for s in TW_STATIONS}
+
+# Continuous 0-9 real-time intensity index -> the same '0'..'7'/'5-'/'5+'
+# bucket labels JMA's shindo scale uses. Confirmed directly from ExpTech's own
+# client code (a 10-entry table keyed 0-9 with these exact labels) - `i`/`I`
+# are pre-scaled onto this same 0-9 domain, so rounding is the whole mapping.
+_TW_INT_LABELS = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7']
+
+def _tw_intensity_label(i):
+    if i is None:
+        return None
+    idx = round(i)
+    if idx < 0:
+        idx = 0
+    elif idx > 9:
+        idx = 9
+    return _TW_INT_LABELS[idx]
+
+_prev_exptech: dict = {}
+_last_exptech_full: list = []
+
+def poll_exptech_rts():
+    global _prev_exptech, _last_exptech_full
+    while True:
+        try:
+            data = _exptech_get('/api/v1/trem/rts')
+            if data and isinstance(data.get('station'), dict):
+                is_first = not _prev_exptech
+                stations_out = []
+                changed = []
+                current_codes = set()
+                for code, st in data['station'].items():
+                    info = _tw_station_lookup.get(code)
+                    if not info:
+                        continue  # station not in our vendored metadata - skip rather than guess a position
+                    label = _tw_intensity_label(st.get('i'))
+                    if label is None:
+                        continue
+                    entry = {'code': code, 'lat': info['lat'], 'lon': info['lon'], 'int': label, 'raw': round(st.get('i', 0), 2)}
+                    pga = st.get('pga')
+                    if pga is not None:
+                        entry['pga'] = round(pga, 2)
+                    stations_out.append(entry)
+                    current_codes.add(code)
+                    curr_key = (label, entry['raw'], entry.get('pga'))
+                    if _prev_exptech.get(code) != curr_key:
+                        changed.append(entry)
+                        _prev_exptech[code] = curr_key
+                removed = [code for code in list(_prev_exptech) if code not in current_codes]
+                for code in removed:
+                    del _prev_exptech[code]
+                _last_exptech_full = stations_out
+                if is_first:
+                    _last_station_keyframe['exptech_stations'] = time.time()
+                    send_data_to_all_sockets({'type': 'exptech_stations', 'stations': stations_out})
+                else:
+                    _maybe_record_station_keyframe('exptech_stations', stations_out)
+                    if changed or removed:
+                        send_data_to_all_sockets({'type': 'exptech_stations_diff', 'stations': changed, 'removed': removed})
+        except Exception as e:
+            print(f'[ExpTech] rts poll failed: {e}')
+        time.sleep(1)
+
+threading.Thread(target=poll_exptech_rts, daemon=True).start()
+
+# Live Taiwan EEW - CWA's own real-time EEW is cell-broadcast only (no public
+# feed), so this is the only continuous live source, same as the rts stations
+# above. Kept as its own recent/timer state, parallel to recent_earthquake_data,
+# since the payload shape (nested eq.*, status codes, string id) is unrelated.
+recent_tw_eew_data: dict = {}   # {id: payload}
+_tw_eew_clear_timers: dict = {}
+_prev_tw_eew_state: dict = {}   # {id: (serial, status, final)} - dedupes unchanged re-polls
+
+def clear_recent_tw_eew_data(key):
+    global recent_tw_eew_data, _prev_tw_eew_state
+    recent_tw_eew_data.pop(key, None)
+    _prev_tw_eew_state.pop(key, None)
+    with _timers_lock:
+        _tw_eew_clear_timers.pop(key, None)
+    send_data_to_all_sockets({'type': 'tw_eew_clear', 'key': key})
+    dmdws.logger.info('Taiwan EEW cleared (key=%s)', key)
+
+def poll_exptech_eew():
+    global recent_tw_eew_data, _prev_tw_eew_state
+    while True:
+        try:
+            data = _exptech_get('/api/v1/eq/eew')
+            if isinstance(data, list):
+                for eew in data:
+                    if eew.get('type') != 'eew':
+                        continue
+                    key = eew.get('id')
+                    status = eew.get('status')
+                    if not key or status == 3:  # EewStatus.Test - never surface to users
+                        continue
+                    if status == 2:  # EewStatus.Cancel
+                        if key in recent_tw_eew_data:
+                            clear_recent_tw_eew_data(key)
+                        continue
+                    state = (eew.get('serial'), status, eew.get('final'))
+                    if _prev_tw_eew_state.get(key) == state:
+                        continue  # unchanged since the last poll - nothing new to broadcast
+                    _prev_tw_eew_state[key] = state
+                    payload = {**eew, 'type': 'tw_eew'}  # ExpTech's own payload says type:'eew'; app.js expects 'tw_eew'
+                    recent_tw_eew_data[key] = payload
+                    with _timers_lock:
+                        old = _tw_eew_clear_timers.get(key)
+                        if old is not None:
+                            old.cancel()
+                        timer = threading.Timer(120, clear_recent_tw_eew_data, args=(key,))
+                        _tw_eew_clear_timers[key] = timer
+                    timer.start()
+                    send_data_to_all_sockets(payload)
+                    dmdws.logger.info('Taiwan EEW received (id=%s serial=%s status=%s)', key, eew.get('serial'), status)
+        except Exception as e:
+            print(f'[ExpTech] eew poll failed: {e}')
+        time.sleep(1)
+
+threading.Thread(target=poll_exptech_eew, daemon=True).start()
+
+# Official CWA post-event earthquake reports (E-A0015-001, "有感地震報告").
+# Schema below (records.Earthquake[].{EarthquakeNo,EarthquakeInfo.{OriginTime,
+# Epicenter.{Location,EpicenterLatitude,EpicenterLongitude},FocalDepth,
+# EarthquakeMagnitude.MagnitudeValue},Intensity.ShakingArea[].EqStation[].
+# {StationID,StationName,StationLatitude,StationLongitude,SeismicIntensity}})
+# is CWA's publicly documented opendata format, not fetched live - CWA's docs
+# endpoint was down and there's no way to hit the real API without a personal
+# key (WEBQUAKE_CWA_API_KEY). Field names below were verified against a real
+# response (fetched with the user's key): OriginTime is actually full ISO8601
+# with an explicit offset, e.g. "2026-08-27T05:47:20+08:00" - parse with
+# fromisoformat, NOT as a naive "yyyy-MM-dd HH:mm:ss" string (an earlier,
+# unverified assumption here was wrong). SeismicIntensity/AreaIntensity use
+# "N級" for levels 0-4/7 (e.g. "3級") and bare "5弱"/"5強"/"6弱"/"6強" for 5/6
+# (also verified live) - see _TW_CWA_INT_MAP.
+recent_tw_quake_data = None
+_tw_quake_clear_timer = None
+_cwa_seen_earthquake_nos: set = set()
+
+_TW_CWA_INT_MAP = {
+    '0級': '0', '1級': '1', '2級': '2', '3級': '3', '4級': '4',
+    '5弱': '5-', '5強': '5+', '6弱': '6-', '6強': '6+', '7級': '7',
+}
+
+# CWA's opendata API has no English variant of the free-text Location field
+# and there's no fixed code table to translate against (unlike JMA's
+# eng_codes.py) since it's dynamically composed prose, e.g.
+# "臺東縣政府東北東方  21.3  公里 (位於臺灣東南部海域)". This is a regex parse of
+# CWA's fairly consistent "{county}政府{direction}方 {distance} 公里
+# (位於{area})" template, not a lookup - falls back to the raw Chinese text
+# whenever a piece doesn't match a known pattern, rather than guessing.
+_TW_COUNTY_EN = {
+    '臺北市': 'Taipei City', '新北市': 'New Taipei City', '桃園市': 'Taoyuan City',
+    '臺中市': 'Taichung City', '臺南市': 'Tainan City', '高雄市': 'Kaohsiung City',
+    '基隆市': 'Keelung City', '新竹市': 'Hsinchu City', '新竹縣': 'Hsinchu County',
+    '嘉義市': 'Chiayi City', '嘉義縣': 'Chiayi County', '苗栗縣': 'Miaoli County',
+    '彰化縣': 'Changhua County', '南投縣': 'Nantou County', '雲林縣': 'Yunlin County',
+    '屏東縣': 'Pingtung County', '宜蘭縣': 'Yilan County', '花蓮縣': 'Hualien County',
+    '臺東縣': 'Taitung County', '澎湖縣': 'Penghu County', '金門縣': 'Kinmen County',
+    '連江縣': 'Lienchiang County',
+}
+_TW_DIRECTION_EN = {
+    '北北東': 'NNE', '東北東': 'ENE', '東南東': 'ESE', '南南東': 'SSE',
+    '南南西': 'SSW', '西南西': 'WSW', '西北西': 'WNW', '北北西': 'NNW',
+    '東北': 'NE', '東南': 'SE', '西南': 'SW', '西北': 'NW',
+    '東': 'E', '南': 'S', '西': 'W', '北': 'N',
+}
+_TW_LOCATION_RE = re.compile(r'^(?P<county>\S+?)政府(?P<dir>[東南西北]+)方\s*(?P<dist>[\d.]+)\s*公里\s*(?:\(位於(?P<area>.+?)\))?$')
+_TW_AREA_SEA_RE = re.compile(r'^臺灣([東南西北]+)部海域$')
+_TW_AREA_OFFSHORE_RE = re.compile(r'^(\S+?)(近海|外海)$')
+
+def _translate_tw_location(raw):
+    if not raw:
+        return raw
+    m = _TW_LOCATION_RE.match(raw.strip())
+    if not m:
+        return raw
+    county_en = _TW_COUNTY_EN.get(m.group('county'))
+    dir_en = _TW_DIRECTION_EN.get(m.group('dir'))
+    if not county_en or not dir_en:
+        return raw
+    en = f"{m.group('dist')} km {dir_en} of {county_en}"
+    area = m.group('area')
+    if area:
+        sea_m = _TW_AREA_SEA_RE.match(area)
+        offshore_m = _TW_AREA_OFFSHORE_RE.match(area)
+        if sea_m:
+            area_dir_en = _TW_DIRECTION_EN.get(sea_m.group(1))
+            en += f" ({(area_dir_en + ' ') if area_dir_en else ''}waters off Taiwan)"
+        elif offshore_m and offshore_m.group(1) in _TW_COUNTY_EN:
+            kind = 'offshore' if offshore_m.group(2) == '近海' else 'far offshore from'
+            en += f" ({kind} {_TW_COUNTY_EN[offshore_m.group(1)]})"
+        else:
+            en += f" ({area})"  # untranslated fallback - better than dropping it
+    return en
+
+def clear_recent_tw_quake_data():
+    global recent_tw_quake_data, _tw_quake_clear_timer
+    recent_tw_quake_data = None
+    with _timers_lock:
+        _tw_quake_clear_timer = None
+    send_data_to_all_sockets({'type': 'tw_past_quake_clear'})
+    dmdws.logger.info('Recent Taiwan quake data cleared')
+
+def _load_cwa_seen_earthquake_nos():
+    global _cwa_seen_earthquake_nos
+    try:
+        with db.Database() as cursor:
+            cursor.execute('SELECT earthquake_no FROM tw_quake_epicenters')
+            _cwa_seen_earthquake_nos = {row[0] for row in cursor.fetchall()}
+    except Exception as e:
+        dmdws.logger.warning('Failed to load seen CWA earthquake numbers: %s', e)
+
+def _store_tw_quake(earthquake_no, lat, lon, depth, magnitude, location, stations, ts, web):
+    with db.Database() as cursor:
+        cursor.execute(
+            'INSERT OR IGNORE INTO tw_quake_epicenters (earthquake_no, lat, lon, depth, magnitude, location, timestamp, web) VALUES (?,?,?,?,?,?,?,?)',
+            (earthquake_no, lat, lon, depth, magnitude, location, ts, web)
+        )
+        if stations:
+            cursor.executemany(
+                'INSERT OR IGNORE INTO tw_quake_stations (earthquake_no, station_id, name, lat, lon, intensity) VALUES (?,?,?,?,?,?)',
+                [(earthquake_no, s['code'], s.get('name', ''), s['lat'], s['lon'], s['int']) for s in stations]
+            )
+
+# Powers the "Earthquake History" sidebar's Taiwan entries (app.js's
+# tw_history handler), mirroring recent_jma_history's role for JMA - newest
+# first, capped, re-broadcast in full on every new report (CWA reports are
+# infrequent enough that this is cheap, unlike the per-second station feeds).
+recent_tw_history: list = []
+_TW_HISTORY_CAP = 40
+
+def _load_tw_history():
+    """Seeds recent_tw_history from SQLite at startup so a restart doesn't
+    empty the sidebar until the next CWA report arrives. _SHINDO_RANK is
+    defined later in this file but that's fine - it's only looked up when
+    this function actually runs (from poll_cwa_reports's background thread,
+    after the whole module has finished loading), not at def time."""
+    global recent_tw_history
+    try:
+        with db.Database() as cursor:
+            cursor.execute(
+                'SELECT earthquake_no, lat, lon, depth, magnitude, location, timestamp, web '
+                'FROM tw_quake_epicenters ORDER BY timestamp DESC LIMIT ?',
+                (_TW_HISTORY_CAP,)
+            )
+            rows = cursor.fetchall()
+            history = []
+            for eq_no, lat, lon, depth, magnitude, location, ts, web in rows:
+                cursor.execute('SELECT intensity FROM tw_quake_stations WHERE earthquake_no = ?', (eq_no,))
+                max_int = None
+                for (val,) in cursor.fetchall():
+                    if val in _SHINDO_RANK and (max_int is None or _SHINDO_RANK[val] > _SHINDO_RANK[max_int]):
+                        max_int = val
+                history.append({
+                    'earthquake_no': eq_no, 'lat': lat, 'lon': lon, 'depth': depth,
+                    'magnitude': magnitude, 'location': location, 'ts': ts,
+                    'max_int': max_int, 'web': web,
+                })
+        recent_tw_history = history
+    except Exception as e:
+        dmdws.logger.warning('Failed to load Taiwan quake history: %s', e)
+
+def poll_cwa_reports():
+    global recent_tw_quake_data, _tw_quake_clear_timer
+    if not CWA_API_KEY:
+        dmdws.logger.warning('poll_cwa_reports: WEBQUAKE_CWA_API_KEY not set - Taiwan earthquake reports disabled')
+        return
+    _load_cwa_seen_earthquake_nos()
+    _load_tw_history()
+    url = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/E-A0015-001'
+    while True:
+        try:
+            r = _http_session().get(url, params={'Authorization': CWA_API_KEY, 'limit': 5}, timeout=10)
+            if r.status_code == 200:
+                records = r.json().get('records', {}).get('Earthquake', [])
+                for rec in records:
+                    eq_no = rec.get('EarthquakeNo')
+                    if eq_no is None or eq_no in _cwa_seen_earthquake_nos:
+                        continue  # CWA publishes each report once - no revision staging like JMA's VXSE51->52->53
+                    _cwa_seen_earthquake_nos.add(eq_no)
+                    info = rec.get('EarthquakeInfo', {}) or {}
+                    epi = info.get('Epicenter', {}) or {}
+                    origin_str = info.get('OriginTime', '')
+                    try:
+                        ts = int(datetime.fromisoformat(origin_str).timestamp())
+                    except Exception:
+                        ts = int(time.time())
+                    try:
+                        lat = float(epi.get('EpicenterLatitude'))
+                        lon = float(epi.get('EpicenterLongitude'))
+                    except (TypeError, ValueError):
+                        lat = lon = None
+                    try:
+                        depth = float(info.get('FocalDepth'))
+                    except (TypeError, ValueError):
+                        depth = None
+                    try:
+                        magnitude = float((info.get('EarthquakeMagnitude') or {}).get('MagnitudeValue'))
+                    except (TypeError, ValueError):
+                        magnitude = None
+                    location_zh = epi.get('Location')
+                    location = _translate_tw_location(location_zh)
+                    stations = []
+                    for area in (rec.get('Intensity', {}) or {}).get('ShakingArea', []):
+                        for st in area.get('EqStation', []):
+                            label = _TW_CWA_INT_MAP.get(st.get('SeismicIntensity', ''))
+                            if not label:
+                                continue
+                            try:
+                                stations.append({
+                                    'code': st.get('StationID', ''),
+                                    'name': st.get('StationName', ''),
+                                    'lat': float(st.get('StationLatitude')),
+                                    'lon': float(st.get('StationLongitude')),
+                                    'int': label,
+                                })
+                            except (TypeError, ValueError):
+                                continue
+                    web = rec.get('Web')
+                    _store_tw_quake(eq_no, lat, lon, depth, magnitude, location, stations, ts, web)
+                    recent_tw_quake_data = {
+                        'type': 'tw_earthquake',
+                        'earthquake_no': eq_no,
+                        'origin_time': origin_str,
+                        'lat': lat, 'lon': lon, 'depth': depth, 'magnitude': magnitude,
+                        'location': location, 'location_zh': location_zh, 'stations': stations,
+                        'web': web,
+                    }
+                    with _timers_lock:
+                        if _tw_quake_clear_timer is not None:
+                            _tw_quake_clear_timer.cancel()
+                        t = threading.Timer(180, clear_recent_tw_quake_data)
+                        _tw_quake_clear_timer = t
+                    t.start()
+                    max_int = None
+                    for s in stations:
+                        if s['int'] in _SHINDO_RANK and (max_int is None or _SHINDO_RANK[s['int']] > _SHINDO_RANK[max_int]):
+                            max_int = s['int']
+                    recent_tw_history.insert(0, {
+                        'earthquake_no': eq_no, 'lat': lat, 'lon': lon, 'depth': depth,
+                        'magnitude': magnitude, 'location': location, 'ts': ts,
+                        'max_int': max_int, 'web': web,
+                    })
+                    del recent_tw_history[_TW_HISTORY_CAP:]
+                    send_data_to_all_sockets({'type': 'tw_history', 'quakes': recent_tw_history})
+                    send_data_to_all_sockets(recent_tw_quake_data)
+                    dmdws.logger.info('CWA earthquake report received (no=%s)', eq_no)
+            else:
+                dmdws.logger.warning('CWA poll got HTTP %s', r.status_code)
+        except Exception as e:
+            print(f'[CWA] poll failed: {e}')
+        time.sleep(20)
+
+threading.Thread(target=poll_cwa_reports, daemon=True).start()
+# --- end Taiwan polling ---
+
 recent_earthquake_data = {}   # {key: output_data} — key is str(origin_time or quake_time)
 recent_tsunami_data = None
 recent_offshore_obs_data = None
@@ -2183,16 +2604,24 @@ def send_recent_data(ws: WebsocketBase):
         send_data(ws, json.dumps({'type': 'nied_stations', 'stations': _last_nied_full}, separators=(',', ':')))
     if _last_snet_full:
         send_data(ws, json.dumps({'type': 'snet_stations', 'stations': _last_snet_full}, separators=(',', ':')))
+    if _last_exptech_full:
+        send_data(ws, json.dumps({'type': 'exptech_stations', 'stations': _last_exptech_full}, separators=(',', ':')))
     for eew_data in recent_earthquake_data.values():
         send_data(ws, json.dumps(eew_data, separators=(',', ':')))
+    for tw_eew_data in recent_tw_eew_data.values():
+        send_data(ws, json.dumps(tw_eew_data, separators=(',', ':')))
     if recent_tsunami_data:
         send_data(ws, json.dumps(recent_tsunami_data, separators=(',', ':')))
     if recent_offshore_obs_data:
         send_data(ws, json.dumps(recent_offshore_obs_data, separators=(',', ':')))
     if recent_past_quake_data:
         send_data(ws, json.dumps(recent_past_quake_data, separators=(',', ':')))
+    if recent_tw_quake_data:
+        send_data(ws, json.dumps(recent_tw_quake_data, separators=(',', ':')))
     if recent_jma_history is not None:
         send_data(ws, json.dumps({'type': 'jma_history', 'quakes': recent_jma_history}, separators=(',', ':')))
+    if recent_tw_history:
+        send_data(ws, json.dumps({'type': 'tw_history', 'quakes': recent_tw_history}, separators=(',', ':')))
     send_data(ws, json.dumps({'type': 'quake_points_index', 'events': _build_quake_points_index()}, separators=(',', ':')))
 
 _last_warning_time = None
@@ -2401,6 +2830,17 @@ def quake_points_near(ts):
         cursor.execute(
             'SELECT code, name_jp, lat, lon, intensity FROM quake_stations WHERE event_id = ?',
             (best_id,)
+        )
+        rows = cursor.fetchall()
+    stations = [{'code': r[0], 'name': r[1], 'lat': r[2], 'lon': r[3], 'int': r[4]} for r in rows]
+    return json.dumps({'stations': stations}, separators=(',', ':'))
+
+@app.route('/api/tw_quake_points/<int:earthquake_no>')
+def tw_quake_points(earthquake_no):
+    with db.Database() as cursor:
+        cursor.execute(
+            'SELECT station_id, name, lat, lon, intensity FROM tw_quake_stations WHERE earthquake_no = ?',
+            (earthquake_no,)
         )
         rows = cursor.fetchall()
     stations = [{'code': r[0], 'name': r[1], 'lat': r[2], 'lon': r[3], 'int': r[4]} for r in rows]
