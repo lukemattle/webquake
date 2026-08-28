@@ -324,6 +324,14 @@ const RYUKYU_ZOOM    = 7;
 function isRyukyuCoord(lat, lon) {
     return lat >= 24 && lat <= 29.5 && lon >= 122 && lon <= 132;
 }
+const TAIWAN_CENTER  = [23.7, 121.0];
+const TAIWAN_ZOOM    = 7;
+// Taiwan bounding box (main island + Penghu/Green I./Orchid I.). Overlaps
+// isRyukyuCoord's western edge (122°E) slightly, so any Taiwan-vs-Ryukyu
+// auto-zoom logic must check isTaiwanCoord first.
+function isTaiwanCoord(lat, lon) {
+    return lat >= 21.5 && lat <= 25.5 && lon >= 119.5 && lon <= 122.2;
+}
 let ryukyuEpicentre = false;
 let ryukyuStations  = false;
 function hasRyukyuActivity() { return ryukyuEpicentre || ryukyuStations; }
@@ -393,6 +401,53 @@ function updateJapanLabelClip() {
 updateJapanLabelClip();
 map.on('zoomend moveend', updateJapanLabelClip);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+// Second, independent label pane/clip for Taiwan — kept separate from the
+// Japan pane/polygon above so this is purely additive and can't regress the
+// existing Japan label clipping.
+map.createPane('taiwanLabels');
+map.getPane('taiwanLabels').style.zIndex = 250;
+L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
+    subdomains: 'abcd', maxZoom: 19,
+    pane: 'taiwanLabels',
+    bounds: [[21, 118], [26, 123]]
+}).addTo(map);
+// Polygon tracing Taiwan's main island plus Penghu, Green Island, and Orchid
+// Island, deliberately excluding Kinmen, Wuqiu, and Matsu (governed by Taiwan
+// but sitting a few km off the Fujian coast — a label clip can't distinguish
+// them from mainland-China place names a few km away at higher zoom). The
+// west edge hugs Taiwan's actual (tilted) coastline — further west at low
+// latitudes, further east up north — and only bulges out to sea for Penghu
+// in the narrow latitude band Penghu actually sits in; an earlier version
+// bulged the whole north edge west to 119.3°E to reach Penghu, which also
+// dragged in Kinmen/Wuqiu/Fujian-coast labels at Taipei's latitude.
+// The west/south edge carries a large margin beyond the literal coastline —
+// a city label's text renders offset from its real anchor point (CARTO's
+// label placement, not a simple point marker), so even an 80km buffer still
+// clipped Tainan/Kaohsiung mid-word. There's no risk in being generous here:
+// at Kaohsiung's latitude the nearest mainland China territory is hundreds
+// of km further west (Guangdong), so only the NORTH edge (near Kinmen/Matsu/
+// the Fujian coast, ~24-26°N) actually needs to stay tight.
+const TAIWAN_CLIP_POLY = [
+    [21.0, 118.3],  // SW corner, far out to sea — no nearby landmass to worry about at this latitude
+    [21.6, 121.9],  // SE corner, includes Orchid I. (~121.55°E) and Green I.
+    [23.0, 122.6],  // east coast, offshore of Hualien/Taitung
+    [25.5, 122.6],  // NE corner, north of Keelung
+    [25.5, 120.9],  // north edge, west end near Taoyuan/Hsinchu's longitude — the one boundary that must stay tight, east of Matsu (~119.9°E) and the Fujian coast
+    [24.3, 120.0],  // down the west coast toward Taichung's longitude
+    [23.6, 118.9],  // bulge west for the Penghu Islands (~119.3-119.7°E), with margin
+    [22.0, 118.4],  // wide margin down through Tainan/Kaohsiung/Pingtung's latitude — safe this far south
+];
+function updateTaiwanLabelClip() {
+    const pane = map.getPane('taiwanLabels');
+    const pts = TAIWAN_CLIP_POLY.map(([lat, lon]) => {
+        const p = map.latLngToLayerPoint([lat, lon]);
+        return `${p.x}px ${p.y}px`;
+    });
+    pane.style.clipPath = `polygon(${pts.join(',')})`;
+}
+updateTaiwanLabelClip();
+map.on('zoomend moveend', updateTaiwanLabelClip);
 
 // ── Layer state ───────────────────────────────────────────────────────
 let regionLayer   = null;
@@ -735,6 +790,7 @@ let _labeledStations = [];
 // unchanged stations missing.
 const liveStationCache = new Map();
 const liveSnetCache = new Map();
+const liveTwStationCache = new Map();
 
 // Mirrors of the true live JMA quake-history list and WS-sourced sidebar
 // entries, kept up to date even while replay is active. Replay playback
@@ -940,6 +996,104 @@ function scheduleRedrawSnetStations() {
 resizeSnetCanvas();
 map.on('resize', () => { resizeSnetCanvas(); scheduleRedrawSnetStations(); });
 map.on('move zoom', scheduleRedrawSnetStations);
+
+// ── Taiwan/ExpTech live station dots (canvas overlay) ─────────────────
+// Mirrors the NIED live-station rendering pattern (per-station dots,
+// zero/labeled split, diff-based updates) — intensity labels are expected
+// to already be bucketed into the same '0'..'7'/'5-'/'5+' etc. strings NIED
+// stations use, so intColor/intRank/intTextColor are reused as-is. Whether
+// CWA's own scale needs a different bucketing/labeling is an open question
+// for the backend poller that will feed this, not this rendering layer.
+let lastTwStations = [];
+let _twZeroStations = [];
+let _twLabeledStations = [];
+let _twStationsByCode = new Map();
+
+const twStationCanvas = document.createElement('canvas');
+twStationCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:452;';
+map.getContainer().appendChild(twStationCanvas);
+
+function resizeTwStationCanvas() {
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    twStationCanvas.width  = sz.x * dpr;
+    twStationCanvas.height = sz.y * dpr;
+    twStationCanvas.style.width  = sz.x + 'px';
+    twStationCanvas.style.height = sz.y + 'px';
+}
+
+function redrawTwStations() {
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = twStationCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, sz.x, sz.y);
+    if (liveStationsHidden || !lastTwStations.length) return;
+
+    const z    = map.getZoom();
+    const base = Math.max(6, Math.min(20, Math.round(z * 2 - 2)));
+    const zeroDiam = Math.max(4, base - 3);
+
+    for (const [group, isZero] of [[_twZeroStations, true], [_twLabeledStations, false]]) {
+        group.forEach(st => {
+            const diam = isZero ? zeroDiam : base;
+            const pt   = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
+            if (pt.x < -diam || pt.y < -diam || pt.x > sz.x + diam || pt.y > sz.y + diam) return;
+            const r = diam / 2;
+            ctx.globalAlpha = isZero ? zeroOpacity(st.raw ?? -3) : 1;
+            ctx.fillStyle = intColor(st.int);
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+            if (!isZero && st.int) {
+                ctx.globalAlpha = 1;
+                const lbl = st.int;
+                const fs  = lbl.length > 1 ? diam * 0.5 : diam * 0.68;
+                ctx.font = `700 ${fs}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = intTextColor(st.int);
+                ctx.fillText(lbl, pt.x, pt.y);
+            }
+        });
+    }
+    ctx.globalAlpha = 1;
+}
+
+let _redrawTwStationsPending = false;
+function scheduleRedrawTwStations() {
+    if (_redrawTwStationsPending) return;
+    _redrawTwStationsPending = true;
+    requestAnimationFrame(() => { _redrawTwStationsPending = false; redrawTwStations(); });
+}
+
+function _setTwStationData(stations) {
+    lastTwStations = stations;
+    for (const st of stations) if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+    _twZeroStations    = stations.filter(st => st.int === '0' || st.int == null);
+    _twLabeledStations = stations
+        .filter(st => st.int !== '0' && st.int != null)
+        .sort((a, b) => intRank(a.int) - intRank(b.int));
+    scheduleRedrawTwStations();
+}
+
+function updateTwStations(stations) {
+    _twStationsByCode = new Map(stations.map(s => [s.code, s]));
+    _setTwStationData(stations);
+}
+
+function applyTwStationsDiff(changed, removed) {
+    for (const code of (removed || [])) _twStationsByCode.delete(code);
+    for (const entry of (changed || [])) _twStationsByCode.set(entry.code, entry);
+    _setTwStationData([..._twStationsByCode.values()]);
+}
+
+resizeTwStationCanvas();
+map.on('resize', () => { resizeTwStationCanvas(); scheduleRedrawTwStations(); });
+map.on('move zoom', scheduleRedrawTwStations);
 
 // ── JMA station dots (past quake point data) ─────────────────────────
 let jmaStations = [];
@@ -1951,6 +2105,12 @@ function createWebSocket() {
         } else if (data.type === 'snet_stations_diff') {
             (data.removed || []).forEach(code => liveSnetCache.delete(code));
             (data.stations || []).forEach(s => liveSnetCache.set(s.code, s));
+        } else if (data.type === 'exptech_stations') {
+            liveTwStationCache.clear();
+            data.stations.forEach(s => liveTwStationCache.set(s.code, s));
+        } else if (data.type === 'exptech_stations_diff') {
+            (data.removed || []).forEach(code => liveTwStationCache.delete(code));
+            (data.stations || []).forEach(s => liveTwStationCache.set(s.code, s));
         } else if (data.type === 'jma_history') {
             liveQuakeHistory = data.quakes;
         }
@@ -2386,6 +2546,14 @@ function displayData(data) {
         applySnetDiff(data.stations, data.removed);
         return;
     }
+    if (data.type === 'exptech_stations') {
+        updateTwStations(data.stations);
+        return;
+    }
+    if (data.type === 'exptech_stations_diff') {
+        applyTwStationsDiff(data.stations, data.removed);
+        return;
+    }
     if (data.type === 'pswaves') {
         return; // now computed client-side
     }
@@ -2676,6 +2844,7 @@ async function jumpReplayTo(ts) {
     // otherwise the map looks empty until a station happens to report a change.
     updateStations([...liveStationCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
     updateSnetStations([...liveSnetCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
+    updateTwStations([...liveTwStationCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
     // Fetch the reconstructed state and a small initial playback buffer in
     // parallel. Only block on a 90s buffer so playback can start almost
     // immediately; the rest is prefetched in the background below.
@@ -2746,6 +2915,7 @@ function exitReplay() {
     // stations missing — restore the full live snapshot to be sure.
     updateStations([...liveStationCache.values()]);
     updateSnetStations([...liveSnetCache.values()]);
+    updateTwStations([...liveTwStationCache.values()]);
     updateTimelineUI();
     closeTimelinePanel();
     map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });

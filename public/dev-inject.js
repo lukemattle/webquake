@@ -102,6 +102,29 @@ window.testNied = function() {
     console.log('[test] NIED stations injected');
 };
 
+const _TW_STATIONS = [
+    {code:'tw-taipei',   lat:25.04, lon:121.56, int:'4',  raw:4.0},
+    {code:'tw-keelung',  lat:25.13, lon:121.74, int:'3',  raw:3.0},
+    {code:'tw-taoyuan',  lat:24.99, lon:121.30, int:'2',  raw:2.0},
+    {code:'tw-hsinchu',  lat:24.80, lon:120.97, int:'1',  raw:1.0},
+    {code:'tw-taichung', lat:24.15, lon:120.68, int:'5-', raw:5.0},
+    {code:'tw-changhua', lat:24.05, lon:120.54, int:'3',  raw:3.2},
+    {code:'tw-chiayi',   lat:23.48, lon:120.45, int:'2',  raw:2.1},
+    {code:'tw-tainan',   lat:22.99, lon:120.21, int:'1',  raw:0.8},
+    {code:'tw-kaohsiung',lat:22.63, lon:120.30, int:'0',  raw:-0.5},
+    {code:'tw-pingtung', lat:22.55, lon:120.55, int:'0',  raw:-1.2},
+    {code:'tw-hualien',  lat:23.98, lon:121.60, int:'6-', raw:6.2},
+    {code:'tw-taitung',  lat:22.76, lon:121.14, int:'4',  raw:4.4},
+    {code:'tw-yilan',    lat:24.76, lon:121.75, int:'2',  raw:2.3},
+    {code:'tw-penghu',   lat:23.57, lon:119.58, int:'0',  raw:-2.0},
+    {code:'tw-lanyu',    lat:22.05, lon:121.55, int:'1',  raw:0.5},
+];
+
+window.testTwStations = function() {
+    displayData({type:'exptech_stations', stations:_TW_STATIONS});
+    console.log('[test] Taiwan/ExpTech stations injected');
+};
+
 // lpgm: 長周期地震動階級 1–4, or 0/null for the (usual) "no long-period motion" case.
 window.testEew = function(warning = false, lpgm = 0) {
     displayData(_eewBase({
@@ -267,4 +290,4 @@ console.log(
     '%c WebQuake dev injector ready ',
     'background:#1a1a1a;color:#8f8;padding:4px 8px;border-radius:3px'
 );
-console.log('testAll() | testNied() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
+console.log('testAll() | testNied() | testTwStations() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
