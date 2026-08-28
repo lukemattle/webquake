@@ -1,5 +1,30 @@
 const VERSION = 'v1.0.1';
 
+// ── Data source filter (Both / Japan only / Taiwan only) ───────────────
+// Purely a display filter: underlying WS data still arrives and is stored
+// as normal regardless of this setting (so switching back doesn't need a
+// refetch/reconnect) — only the rendering functions below check it. See
+// showJapan()/showTaiwan() call sites throughout for what's actually gated.
+const DATA_SOURCE_KEY = 'webquake_data_source';
+let dataSourceFilter = localStorage.getItem(DATA_SOURCE_KEY) || 'both';
+function showJapan()  { return dataSourceFilter !== 'tw'; }
+function showTaiwan() { return dataSourceFilter !== 'jp'; }
+
+function updateDataSourceFilterUI() {
+    const ids = { both: 'ds-filter-both', jp: 'ds-filter-jp', tw: 'ds-filter-tw' };
+    for (const [mode, id] of Object.entries(ids)) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', dataSourceFilter === mode);
+    }
+}
+
+function setDataSourceFilter(mode) {
+    dataSourceFilter = mode;
+    localStorage.setItem(DATA_SOURCE_KEY, mode);
+    updateDataSourceFilterUI();
+    reapplyDataSourceFilter();
+}
+
 // ── OneSignal push notifications ────────────────────────────────────
 const NOTIF_LANG_KEY = 'webquake_notif_lang';
 
@@ -449,6 +474,51 @@ function updateTaiwanLabelClip() {
 updateTaiwanLabelClip();
 map.on('zoomend moveend', updateTaiwanLabelClip);
 
+// Applies the current dataSourceFilter across every piece it affects: the two
+// label panes, all four station canvases, epicenter markers, and the EEW/
+// past-quake popups (dismissed if their country just got hidden). Called on
+// every setDataSourceFilter() and once at startup so a persisted non-default
+// choice takes effect immediately without waiting for the next WS message.
+function reapplyDataSourceFilter() {
+    map.getPane('japanLabels').style.display  = showJapan()  ? '' : 'none';
+    map.getPane('taiwanLabels').style.display = showTaiwan() ? '' : 'none';
+    scheduleRedrawStations();
+    scheduleRedrawSnetStations();
+    scheduleRedrawTwStations();
+    scheduleRedrawJmaStations();
+    applyEpicenterVisibility();
+    renderEewPanels();
+    // Seismic wave circles (P/S-wave animation) self-correct on the next
+    // animateWaves() frame via the same key-prefix check, no call needed here.
+    // regionLayer (JMA forecast-region intensity tint) may not exist yet at
+    // startup — it loads async — hence the null check.
+    if (regionLayer) {
+        if (showJapan() && !map.hasLayer(regionLayer)) map.addLayer(regionLayer);
+        else if (!showJapan() && map.hasLayer(regionLayer)) map.removeLayer(regionLayer);
+    }
+    // Tsunami is JMA-only (out of scope for Taiwan) — re-drive coastlines/obs
+    // circles/card from current state; drawTsunamiCoastlines/
+    // drawOffshoreObsRegions/renderTsunamiCard each check showJapan()
+    // themselves and clear when hidden, so this one call handles both
+    // directions (hide and reveal) correctly.
+    if (activeTsunamiData) drawTsunamiCoastlines(activeTsunamiData); else clearTsunamiCoastlines();
+    if (activeTsunamiObs) drawOffshoreObsRegions(activeTsunamiObs); else clearOffshoreObsRegions();
+    renderTsunamiCard();
+    // The NIED max-intensity/PGA box only updates on the next live station
+    // message, which could be a while off if the socket is otherwise idle —
+    // force-hide it immediately rather than leaving stale JMA-only numbers
+    // on screen in Taiwan-only mode.
+    if (!showJapan()) document.getElementById('obs-panel').classList.remove('visible');
+    // #station-popup is shared between NIED/S-net and ExpTech stations (see
+    // showStationPopup's 'source' param) with no cheap way to tell which
+    // country a currently-open one belongs to, so any filter change just
+    // dismisses it unconditionally — low-stakes, a click reopens it. The
+    // Taiwan quake popup's target country is unambiguous, so that one only
+    // closes when Taiwan specifically becomes hidden.
+    dismissStationPopup();
+    if (!showTaiwan()) dismissTwQuakePopup();
+}
+
 // ── Layer state ───────────────────────────────────────────────────────
 let regionLayer   = null;
 const epicenterMarks = new Map(); // key → Leaflet marker; EEW keys are String(origin_time), JMA past quake uses '__past__', Taiwan/CWA past quake uses '__tw_past__'
@@ -531,6 +601,7 @@ const tsunamiRegionCentroids = {}; // region code → [lat, lon], from tsunami-r
 
 function drawTsunamiCoastlines(data) {
     if (!tsunamiLayer) return;
+    if (!showJapan()) { clearTsunamiCoastlines(); return; } // tsunami is JMA-only, out of scope for Taiwan
     const codes      = data.region_codes || [];
     const kindCodes  = data.kind_codes || [];
     const colorMap = {};
@@ -622,6 +693,9 @@ fetch('/japan-regions.geojson')
         regionLayer = L.geoJSON(gj, {
             style: { color: '#333', weight: 0.5, fillColor: '#1c1c1c', fillOpacity: 0.65 }
         }).addTo(map);
+        // Loads async — if the user already switched to Taiwan-only before
+        // this resolved, the layer would otherwise appear regardless.
+        if (!showJapan()) map.removeLayer(regionLayer);
     });
 
 fetch('/tsunami-regions.geojson')
@@ -725,6 +799,10 @@ let _maxLiveStationRank = -1;
 let _maxJmaStationRank = -1;
 
 function currentMaxIntRank() {
+    // All three inputs here are JMA-only (Taiwan doesn't feed this legend
+    // yet), so hide it entirely in Taiwan-only mode rather than showing a
+    // rank computed from data the user asked to hide.
+    if (!showJapan()) return -1;
     let max = _maxEewIntRank;
     if (!liveStationsHidden && _maxLiveStationRank > max) max = _maxLiveStationRank;
     if (jmaStationsVisible && _maxJmaStationRank > max) max = _maxJmaStationRank;
@@ -732,7 +810,9 @@ function currentMaxIntRank() {
 }
 
 function currentMaxTsunamiRank() {
-    if (!activeTsunamiData) return -1;
+    // Tsunami is JMA-only and explicitly out of scope for Taiwan (see plan) —
+    // no Taiwan tsunami data exists in this app at all.
+    if (!showJapan() || !activeTsunamiData) return -1;
     return TSUNAMI_LEVELS.indexOf(activeTsunamiData.warning_level);
 }
 
@@ -827,7 +907,7 @@ function redrawStations() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
     updateMapKey();
-    if (liveStationsHidden || !lastStations.length) return;
+    if (!showJapan() || liveStationsHidden || !lastStations.length) return;
 
     const z    = map.getZoom();
     const base = Math.max(6, Math.min(20, Math.round(z * 2 - 2)));
@@ -943,7 +1023,7 @@ function redrawSnetStations() {
     const ctx = snetCanvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
-    if (!lastSnetStations.length || liveStationsHidden) return;
+    if (!showJapan() || !lastSnetStations.length || liveStationsHidden) return;
     const z    = map.getZoom();
     const base = Math.max(5, Math.min(16, Math.round(z * 2 - 3)));
     const r    = base / 2;
@@ -1029,7 +1109,7 @@ function redrawTwStations() {
     const ctx = twStationCanvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
-    if (liveStationsHidden || !lastTwStations.length) return;
+    if (!showTaiwan() || liveStationsHidden || !lastTwStations.length) return;
 
     const z    = map.getZoom();
     const base = Math.max(6, Math.min(20, Math.round(z * 2 - 2)));
@@ -1140,7 +1220,7 @@ function redrawJmaStations() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
     updateMapKey();
-    if (!jmaStationsVisible || !jmaStations.length) return;
+    if (!showJapan() || !jmaStationsVisible || !jmaStations.length) return;
     const z    = map.getZoom();
     const base = Math.max(7, Math.min(22, Math.round(z * 2)));
     const r    = base / 2;
@@ -1665,7 +1745,16 @@ function animateWaves() {
     if (waveMap.size === 0) { waveAnimFrame = null; return; }
     const now = (replayActive && replayClock != null) ? currentReplayClock() : Date.now() / 1000;
     let renderer = null;
-    for (const entry of waveMap.values()) {
+    for (const [key, entry] of waveMap) {
+        // Data source filter — same 'tw:' prefix convention as epicenter marker
+        // keys. Circles are removed (not just skipped) when hidden so a filter
+        // switch takes effect immediately rather than only on next redraw, and
+        // nulled so they're cleanly recreated if the filter switches back.
+        if ((key.startsWith('tw:') ? !showTaiwan() : !showJapan())) {
+            if (entry.pCircle) { map.removeLayer(entry.pCircle); entry.pCircle = null; }
+            if (entry.sCircle) { map.removeLayer(entry.sCircle); entry.sCircle = null; }
+            continue;
+        }
         const { lat, lon, depthKm, originTimeSec } = entry;
         const elapsed = now - originTimeSec;
         const pR = seismicRadiusKm(elapsed, depthKm, false) * 1000; // metres
@@ -1747,6 +1836,31 @@ function placeMarker(key, lat, lon, isPlum, isEew) {
         positionEpicenterMark(mark);
         epicenterMarks.set(key, mark);
     }
+        applyEpicenterVisibility(key);
+}
+
+// Country-scoped marker keys: '__tw_past__' (Taiwan/CWA post-event) and any
+// 'tw:'-prefixed key (Taiwan live EEW, see placeAllTwEewEpicenters) — every
+// other key is JMA's. Called after every placeMarker so a marker placed
+// while its country is filtered out doesn't flash visible even briefly, and
+// from reapplyDataSourceFilter() to update markers already on the map.
+function isTwEpicenterKey(key) {
+    return key === '__tw_past__' || key.startsWith('tw:');
+}
+
+function applyEpicenterVisibility(onlyKey) {
+    const keys = onlyKey !== undefined ? [onlyKey] : [...epicenterMarks.keys()];
+    for (const key of keys) {
+        const mark = epicenterMarks.get(key);
+        if (!mark) continue;
+        const visible = isTwEpicenterKey(key) ? showTaiwan() : showJapan();
+        if (mark._isDomMark) {
+            mark.el.style.display = visible ? '' : 'none';
+        } else {
+            if (visible && !map.hasLayer(mark)) map.addLayer(mark);
+            else if (!visible && map.hasLayer(mark)) map.removeLayer(mark);
+        }
+    }
 }
 
 function placeAllEpicenters() {
@@ -1786,6 +1900,7 @@ function clearOffshoreObsRegions() {
 
 function drawOffshoreObsRegions(data) {
     clearOffshoreObsRegions();
+    if (!showJapan()) return; // tsunami is JMA-only, out of scope for Taiwan
     const lats = data.obs_lats || [], lons = data.obs_lons || [], radii = data.obs_radii_km || [];
     const estimated = data.obs_loc_estimated || [];
     const namesEn = data.obs_station_names_en || [], namesJa = data.obs_station_names || [];
@@ -1864,7 +1979,7 @@ function kindLabelJa(code) {
 
 function renderTsunamiCard() {
     const panel = document.getElementById('tsunami-panel');
-    if (!activeTsunamiData && !activeTsunamiObs) {
+    if (!showJapan() || (!activeTsunamiData && !activeTsunamiObs)) {
         panel.classList.remove('visible');
         positionTsunamiPanel();
         updateMapKey();
@@ -2104,7 +2219,9 @@ function clearTwEewDisplay(key) {
 function renderEewPanels() {
     const container = document.getElementById('eew-cards');
     container.innerHTML = '';
-    if (activeEews.size === 0 && activeTwEews.size === 0) {
+    const jpEews = showJapan()  ? activeEews   : new Map();
+    const twEews = showTaiwan() ? activeTwEews : new Map();
+    if (jpEews.size === 0 && twEews.size === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
         positionObsPanel();
@@ -2112,7 +2229,7 @@ function renderEewPanels() {
     }
     document.getElementById('no-eew-msg').style.display = 'none';
     let first = true;
-    for (const data of activeEews.values()) {
+    for (const data of jpEews.values()) {
         if (!first) {
             const sep = document.createElement('div');
             sep.className = 'eew-card-sep';
@@ -2121,7 +2238,7 @@ function renderEewPanels() {
         container.appendChild(buildEewCard(data));
         first = false;
     }
-    for (const data of activeTwEews.values()) {
+    for (const data of twEews.values()) {
         if (!first) {
             const sep = document.createElement('div');
             sep.className = 'eew-card-sep';
@@ -2172,6 +2289,8 @@ function setLanguage(lang) {
 
 document.addEventListener('DOMContentLoaded', () => {
     setLanguage(window.__WEBQUAKE_LANG === 'ja' ? 'ja' : 'en');
+    updateDataSourceFilterUI();
+    reapplyDataSourceFilter();
     loadTimelineMarkersAndGaps();
     // Fallback only — new quakes/tsunamis trigger an immediate refresh themselves (see displayData).
     if (!_timelineRefreshTimer) _timelineRefreshTimer = setInterval(loadTimelineMarkersAndGaps, 300000);
@@ -2856,7 +2975,7 @@ function displayData(data) {
         activeTwQuakeData = data;
         if (data.lat != null && data.lon != null) {
             placeMarker('__tw_past__', data.lat, data.lon);
-            if (!hasRyukyuActivity()) {
+            if (showTaiwan() && !hasRyukyuActivity()) {
                 map.flyTo([data.lat, data.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
             }
         }
@@ -2877,7 +2996,7 @@ function displayData(data) {
         const eq = data.eq || {};
         if (eq.lat != null && eq.lon != null) {
             startWaveAnimation('tw:' + key, eq.lat, eq.lon, parseFloat(eq.depth) || 10, eq.time != null ? eq.time / 1000 : Date.now() / 1000);
-            if (!hasRyukyuActivity()) {
+            if (showTaiwan() && !hasRyukyuActivity()) {
                 map.flyTo([eq.lat, eq.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
             }
         }
