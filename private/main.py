@@ -1640,7 +1640,7 @@ def _load_history_cache():
         _history_cache.load_error = str(e)
         dmdws.logger.warning('History replay cache: migration FAILED after %.3fs, falling back to SQLite for replay reads: %s', _history_cache.load_seconds, e)
 
-_load_history_cache()
+threading.Thread(target=_load_history_cache, daemon=True).start()
 threading.Thread(target=_history_heartbeat_loop, daemon=True).start()
 threading.Thread(target=_history_prune_loop, daemon=True).start()
 
@@ -3058,7 +3058,6 @@ def admin_test_discord_notification():
 # --- end admin panel ---
 
 _LONG_CACHE_EXTS = ('.geojson', '.mp3', '.png', '.ico', '.webmanifest', '.woff', '.woff2')
-_VERSION_RE = re.compile(r"const VERSION\s*=\s*'([^']+)'")
 
 _index_cache: dict = {}  # lang -> {'key': (mtimes), 'html': str}
 _index_lock = threading.Lock()
@@ -3080,31 +3079,32 @@ _INDEX_LOCALIZED = {
     },
 }
 
-def _render_index(lang='en'):
-    """Read index.html, stamp the app.js VERSION onto the css/js URLs, and (for
-    non-English variants) rewrite the head's title/meta/canonical/og/twitter
-    tags and initial-language flag via _INDEX_LOCALIZED.
-    Cached per-lang and only re-rendered when either source file's mtime
-    changes, so the common case is two cheap stat() calls instead of two full
-    file reads + regex."""
-    idx_path = os.path.join(_public, 'index.html')
-    js_path = os.path.join(_public, 'app.js')
-    key = (os.path.getmtime(idx_path), os.path.getmtime(js_path))
+def _render_index(lang='en', public_dir=None, dev=False):
+    """Read index.html, stamp app.js's mtime onto the css/js URLs as a cache-busting
+    query param, and (for non-English variants) rewrite the head's title/meta/
+    canonical/og/twitter tags and initial-language flag via _INDEX_LOCALIZED.
+    Cached per-(public_dir, lang) and only re-rendered when either source
+    file's mtime changes, so the common case is two cheap stat() calls
+    instead of two full file reads. The mtime doubles as the version, so a
+    file edit always gets a fresh URL with no manual version bump needed."""
+    public_dir = public_dir or _public
+    idx_path = os.path.join(public_dir, 'index.html')
+    js_path = os.path.join(public_dir, 'app.js')
+    js_mtime = os.path.getmtime(js_path)
+    key = (os.path.getmtime(idx_path), js_mtime)
+    cache_key = (public_dir, lang)
     with _index_lock:
-        cached = _index_cache.get(lang)
+        cached = _index_cache.get(cache_key)
         if cached is not None and cached['key'] == key:
             return cached['html']
         with open(idx_path, encoding='utf-8') as f:
             html = f.read()
-        with open(js_path, encoding='utf-8') as f:
-            match = _VERSION_RE.search(f.read(200))
-        if match:
-            version = match.group(1)
-            html = html.replace('href="/style.css"', f'href="/style.css?v={version}"')
-            html = html.replace('src="/app.js"', f'src="/app.js?v={version}"')
+        version = str(int(js_mtime))
+        html = html.replace('href="/style.css"', f'href="/style.css?v={version}"')
+        html = html.replace('src="/app.js"', f'src="/app.js?v={version}"')
         for old, new in _INDEX_LOCALIZED.get(lang, {}).items():
             html = html.replace(old, new)
-        _index_cache[lang] = {'key': key, 'html': html}
+        _index_cache[cache_key] = {'key': key, 'html': html}
         return html
 
 @app.route('/')
