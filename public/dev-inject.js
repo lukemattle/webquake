@@ -126,16 +126,27 @@ window.testTwStations = function() {
 };
 
 // CWA-style post-event report — mirrors the shape poll_cwa_reports() will
-// eventually broadcast (earthquake_no, lat/lon, depth, magnitude, location).
+// eventually broadcast (earthquake_no, lat/lon, depth, magnitude, location,
+// per-station stations[]). Station coords are spread across a few counties
+// so computeTwRegionIntensitiesFromStations has something to bucket.
 window.testTwQuake = function() {
     displayData({
         type: 'tw_earthquake',
         earthquake_no: 115999,
+        origin_time: new Date().toISOString(),
         lat: 23.7,
         lon: 121.6,
         depth: 15,
         magnitude: 5.8,
         location: 'Hualien County',
+        stations: [
+            {code:'tw-hualien1', lat:23.98, lon:121.60, int:'6-'},
+            {code:'tw-hualien2', lat:23.75, lon:121.55, int:'5+'},
+            {code:'tw-yilan1',   lat:24.76, lon:121.75, int:'4'},
+            {code:'tw-taitung1', lat:22.76, lon:121.14, int:'4'},
+            {code:'tw-nantou1',  lat:23.90, lon:120.98, int:'3'},
+            {code:'tw-taipei1',  lat:25.04, lon:121.56, int:'2'},
+        ],
     });
     console.log('[test] Taiwan quake injected');
 };

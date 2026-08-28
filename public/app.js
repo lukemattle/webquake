@@ -496,6 +496,10 @@ function reapplyDataSourceFilter() {
         if (showJapan() && !map.hasLayer(regionLayer)) map.addLayer(regionLayer);
         else if (!showJapan() && map.hasLayer(regionLayer)) map.removeLayer(regionLayer);
     }
+    if (twRegionLayer) {
+        if (showTaiwan() && !map.hasLayer(twRegionLayer)) map.addLayer(twRegionLayer);
+        else if (!showTaiwan() && map.hasLayer(twRegionLayer)) map.removeLayer(twRegionLayer);
+    }
     // Tsunami is JMA-only (out of scope for Taiwan) — re-drive coastlines/obs
     // circles/card from current state; drawTsunamiCoastlines/
     // drawOffshoreObsRegions/renderTsunamiCard each check showJapan()
@@ -686,7 +690,68 @@ function computeRegionIntensitiesFromStations(stations) {
     return Object.entries(maxByCode).map(([code, max_int]) => ({ code, max_int }));
 }
 
-fetch('/japan-regions.geojson')
+// ── Taiwan region coloring (county/city, from taiwan-regions.geojson) ──
+// CWA reports don't come with a JMA-style per-region-code area_intensities
+// array — they only give per-station readings — so unlike Japan, station
+// bucketing (mirroring computeRegionIntensitiesFromStations above) is the
+// *primary* path here, not just a fallback. This also sidesteps needing a
+// CN/EN name-matching step for the join itself: bucketing by point-in-polygon
+// against each station's own lat/lon works regardless of what language (or
+// exact wording) a report's location text is in — matching by county name
+// string would be far more fragile (CWA's own "Location"/"CountyName" fields
+// aren't guaranteed to equal this geojson's COUNTYNAME exactly).
+let twRegionLayer = null;
+let _twRegionFeatureBounds = null;
+let _twAreaIntensities = []; // [{code: COUNTYNAME (Chinese), max_int}]
+
+function findTwRegionCodeForPoint(lat, lon) {
+    if (!_twRegionFeatureBounds) return null;
+    for (const { f, bbox } of _twRegionFeatureBounds) {
+        if (lon < bbox[0] || lon > bbox[2] || lat < bbox[1] || lat > bbox[3]) continue;
+        if (_pointInGeometry(lon, lat, f.geometry)) return f.properties.COUNTYNAME;
+    }
+    return null;
+}
+
+function computeTwRegionIntensitiesFromStations(stations) {
+    if (!_twRegionFeatureBounds || !stations || !stations.length) return [];
+    const maxByCode = {};
+    stations.forEach(st => {
+        if (st.int == null || st.lat == null || st.lon == null) return;
+        if (intRank(st.int) < 0) return;
+        const code = findTwRegionCodeForPoint(st.lat, st.lon);
+        if (!code) return;
+        if (!(code in maxByCode) || intRank(st.int) > intRank(maxByCode[code])) maxByCode[code] = st.int;
+    });
+    return Object.entries(maxByCode).map(([code, max_int]) => ({ code, max_int }));
+}
+
+function renderTwRegionColors() {
+    if (!twRegionLayer) return;
+    const intMap = {};
+    _twAreaIntensities.forEach(a => { if (a.code) intMap[a.code] = a.max_int; });
+    twRegionLayer.setStyle(feat => {
+        const maxInt = intMap[feat.properties.COUNTYNAME];
+        return {
+            fillColor:   maxInt ? intColor(maxInt) : '#1c1c1c',
+            fillOpacity: maxInt ? 0.78 : 0.60,
+            color:       maxInt ? '#111' : '#333',
+            weight:      maxInt ? 0.4 : 0.5,
+        };
+    });
+}
+
+function updateTwRegionColors(areaIntensities) {
+    _twAreaIntensities = areaIntensities;
+    renderTwRegionColors();
+}
+
+function resetTwRegionColors() {
+    _twAreaIntensities = [];
+    renderTwRegionColors();
+}
+
+fetch('japan-regions.geojson')
     .then(r => r.json())
     .then(gj => {
         _regionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
@@ -698,7 +763,7 @@ fetch('/japan-regions.geojson')
         if (!showJapan()) map.removeLayer(regionLayer);
     });
 
-fetch('/tsunami-regions.geojson')
+fetch('tsunami-regions.geojson')
     .then(r => r.json())
     .then(gj => {
         tsunamiLayer = L.geoJSON(gj, {
@@ -711,6 +776,16 @@ fetch('/tsunami-regions.geojson')
                 tsunamiRegionCentroids[String(code)] = [c.lat, c.lng];
             }
         });
+    });
+
+fetch('taiwan-regions.geojson')
+    .then(r => r.json())
+    .then(gj => {
+        _twRegionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
+        twRegionLayer = L.geoJSON(gj, {
+            style: { color: '#333', weight: 0.5, fillColor: '#1c1c1c', fillOpacity: 0.65 }
+        }).addTo(map);
+        if (!showTaiwan()) map.removeLayer(twRegionLayer);
     });
 
 // ── Tsunami region pin (clicking a forecast/observation row in the panel) ──
@@ -2191,6 +2266,41 @@ function buildTwEewCard(data) {
     return div;
 }
 
+// Taiwan/CWA post-event report card — mirrors buildEewCard's shape but reads
+// tw_earthquake's flat field layout (location/magnitude/depth/stations) and
+// derives its intensity box from the per-station max rather than a carried
+// max_int, since CWA reports don't include one directly.
+function twQuakeReportTime(data) {
+    if (typeof data.origin_time === 'number') return formatCwaTime(data.origin_time);
+    if (typeof data.origin_time === 'string') {
+        const t = Date.parse(data.origin_time);
+        if (!isNaN(t)) return formatCwaTime(t);
+    }
+    return '–';
+}
+
+function buildTwQuakeCard(data) {
+    let maxInt = null;
+    if (Array.isArray(data.stations)) {
+        for (const st of data.stations) {
+            if (st.int == null) continue;
+            if (maxInt == null || intRank(st.int) > intRank(maxInt)) maxInt = st.int;
+        }
+    }
+    const div = document.createElement('div');
+    div.className = 'eew-card';
+    div.innerHTML =
+        `<div class="eew-type"><span class="en">Taiwan Earthquake Report</span><span class="ja">台湾地震情報</span>` +
+            (data.earthquake_no != null ? `  #${data.earthquake_no}` : '') +
+            ` <span class="quake-source quake-source-cwa" style="font-size:0.85em">CWA</span>` +
+        `</div>` +
+        `<div class="eew-int-box" style="background:${maxInt != null ? intColor(maxInt) : '#555'};color:${maxInt != null ? intTextColor(maxInt) : '#aaa'}">${maxInt ?? '–'}</div>` +
+        `<div class="eew-location">${data.location || '–'}</div>` +
+        `<div class="eew-detail">M ${data.magnitude ?? '–'}  Depth ${data.depth != null ? data.depth + ' km' : '–'}</div>` +
+        `<div class="eew-time">${twQuakeReportTime(data)}</div>`;
+    return div;
+}
+
 // Mirrors placeAllEpicenters() for Taiwan EEWs — kept as its own function
 // (rather than merged into activeEews' iteration) since activeTwEews' data
 // shape (eq.lat/eq.lon nested, not flat) differs from JMA's.
@@ -2219,9 +2329,10 @@ function clearTwEewDisplay(key) {
 function renderEewPanels() {
     const container = document.getElementById('eew-cards');
     container.innerHTML = '';
-    const jpEews = showJapan()  ? activeEews   : new Map();
-    const twEews = showTaiwan() ? activeTwEews : new Map();
-    if (jpEews.size === 0 && twEews.size === 0) {
+    const jpEews   = showJapan()  ? activeEews   : new Map();
+    const twEews   = showTaiwan() ? activeTwEews : new Map();
+    const twQuake  = (showTaiwan() && activeTwQuakeData) ? [activeTwQuakeData] : [];
+    if (jpEews.size === 0 && twEews.size === 0 && twQuake.length === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
         positionObsPanel();
@@ -2245,6 +2356,15 @@ function renderEewPanels() {
             container.appendChild(sep);
         }
         container.appendChild(buildTwEewCard(data));
+        first = false;
+    }
+    for (const data of twQuake) {
+        if (!first) {
+            const sep = document.createElement('div');
+            sep.className = 'eew-card-sep';
+            container.appendChild(sep);
+        }
+        container.appendChild(buildTwQuakeCard(data));
         first = false;
     }
     setLanguage(currentLanguage);
@@ -2966,13 +3086,21 @@ function displayData(data) {
         clearOffshoreObsRegions();
         renderTsunamiCard();
     } else if (data.type === 'tw_earthquake') {
-        // Taiwan/CWA post-event report. Kept deliberately minimal for now —
-        // the epicenter marker (own dedicated key, so a concurrent JMA
-        // past-quake marker '__past__' is never overwritten) opens a small
-        // popup with the CWA badge on click. Region coloring and a proper
-        // sidebar card (matching JMA's history list) are separate follow-up
-        // pieces, not yet wired in here.
+        // Taiwan/CWA post-event report. The epicenter marker (own dedicated
+        // key, so a concurrent JMA past-quake marker '__past__' is never
+        // overwritten) opens a small popup with the CWA badge on click.
+        // Region coloring buckets per-station readings by point-in-polygon
+        // (see computeTwRegionIntensitiesFromStations) since CWA reports
+        // don't carry a JMA-style area_intensities array. Also rendered as
+        // a card in the shared EEW panel (buildTwQuakeCard/renderEewPanels),
+        // alongside the click-triggered map popup.
         activeTwQuakeData = data;
+        if (data.stations && data.stations.length) {
+            updateTwRegionColors(computeTwRegionIntensitiesFromStations(data.stations));
+        } else {
+            resetTwRegionColors();
+        }
+        renderEewPanels();
         if (data.lat != null && data.lon != null) {
             placeMarker('__tw_past__', data.lat, data.lon);
             if (showTaiwan() && !hasRyukyuActivity()) {
@@ -2983,6 +3111,8 @@ function displayData(data) {
         activeTwQuakeData = null;
         dismissTwQuakePopup();
         removeEpicenterMark('__tw_past__');
+        resetTwRegionColors();
+        renderEewPanels();
     } else if (data.type === 'tw_eew') {
         // Live Taiwan EEW, sourced from ExpTech's eq/eew feed (CWA has no public
         // live push — see plan notes). Schema fields (author/serial/eq.{time,loc,
