@@ -26,6 +26,7 @@
     <link rel="canonical" href="https://URL/">
     <link rel="alternate" hreflang="en" href="https://URL/">
     <link rel="alternate" hreflang="ja" href="https://URL/ja/">
+    <link rel="alternate" hreflang="zh-Hant" href="https://URL/zh/">
     <link rel="alternate" hreflang="x-default" href="https://URL/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="WebQuake">
@@ -109,6 +110,7 @@
     <div id="no-eew-msg" class="no-eew-placeholder">
         <span class="en">No Earthquake Info issued</span>
         <span class="ja">地震情報なし</span>
+        <span class="zh">尚無地震資訊</span>
     </div>
     <div id="eew-cards"></div>
 </div>
@@ -119,15 +121,17 @@
         <div class="obs-label">
             <span class="en">Max Intensity</span>
             <span class="ja">観測最大震度</span>
+            <span class="zh">最大震度</span>
         </div>
         <div class="obs-int-box" id="obs-int-box">–</div>
         <div id="obs-pga-label" style="display:none">
             <span class="en">Max PGA</span>
             <span class="ja">最大加速度</span>
+            <span class="zh">最大加速度</span>
         </div>
         <div id="obs-pga-box" style="display:none">–</div>
-        <div id="obs-nied-warning"><span class="en">NIED server under high load, point updates may be delayed/non-existent</span><span class="ja">NIEDサーバー高負荷中、観測点の更新が遅延または停止する可能性があります</span></div>
-        <div id="obs-live-hidden"><span class="en">Live intensity on map hidden as past quake is being viewed.</span><span class="ja">過去の地震を表示中のため、リアルタイム震度は地図上で非表示です。</span></div>
+        <div id="obs-nied-warning"><span class="en">NIED server under high load, point updates may be delayed/non-existent</span><span class="ja">NIEDサーバー高負荷中、観測点の更新が遅延または停止する可能性があります</span><span class="zh">NIED伺服器負載過高，觀測點更新可能延遲或無法顯示</span></div>
+        <div id="obs-live-hidden"><span class="en">Live intensity on map hidden as past quake is being viewed.</span><span class="ja">過去の地震を表示中のため、リアルタイム震度は地図上で非表示です。</span><span class="zh">正在檢視過去地震資料，地圖上的即時震度已隱藏。</span></div>
     </div>
 </div>
 
@@ -140,9 +144,9 @@
 <!-- Earthquake history sidebar -->
 <div id="quake-sidebar">
     <div id="quake-sidebar-header">
-        <span class="quake-sidebar-title"><span class="en">Earthquake History</span><span class="ja">地震履歴</span></span>
+        <span class="quake-sidebar-title"><span class="en">Earthquake History</span><span class="ja">地震履歴</span><span class="zh">地震歷史</span></span>
         <span class="lang-seg">
-            <button type="button" class="lang-seg-btn" id="sb-filter-both" onclick="setSidebarFilter('both')" title="Both">Both</button>
+            <button type="button" class="lang-seg-btn" id="sb-filter-both" onclick="setSidebarFilter('both')" title="Both"><span class="en">Both</span><span class="ja">両方</span><span class="zh">兩者</span></button>
             <button type="button" class="lang-seg-btn" id="sb-filter-jp" onclick="setSidebarFilter('jp')" title="Japan only">JP</button>
             <button type="button" class="lang-seg-btn" id="sb-filter-tw" onclick="setSidebarFilter('tw')" title="Taiwan only">TW</button>
         </span>
@@ -154,86 +158,88 @@
 <!-- Settings popup -->
 <div id="settings-popup">
     <button id="settings-close" onclick="toggleSettings()" aria-label="Close">✕</button>
-    <div class="settings-title"><span class="en">Data Source</span><span class="ja">データソース</span></div>
+    <div class="settings-title"><span class="en">Data Source</span><span class="ja">データソース</span><span class="zh">資料來源</span></div>
     <div class="settings-row">
-        <span class="settings-label"><span class="en">Show</span><span class="ja">表示</span></span>
+        <span class="settings-label"><span class="en">Show</span><span class="ja">表示</span><span class="zh">顯示</span></span>
         <span class="lang-seg">
-            <button type="button" class="lang-seg-btn" id="ds-filter-both" onclick="setDataSourceFilter('both')">Both</button>
+            <button type="button" class="lang-seg-btn" id="ds-filter-both" onclick="setDataSourceFilter('both')"><span class="en">Both</span><span class="ja">両方</span><span class="zh">兩者</span></button>
             <button type="button" class="lang-seg-btn" id="ds-filter-jp" onclick="setDataSourceFilter('jp')">JP</button>
             <button type="button" class="lang-seg-btn" id="ds-filter-tw" onclick="setDataSourceFilter('tw')">TW</button>
         </span>
     </div>
-    <div class="settings-title"><span class="en">Stations</span><span class="ja">観測点</span></div>
+    <div class="settings-title"><span class="en">Stations</span><span class="ja">観測点</span><span class="zh">觀測站</span></div>
     <label class="settings-row">
         <span class="settings-label">S-net</span>
         <span class="tog"><input type="checkbox" id="tog-snet" checked onchange="toggleSnetVisible()"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Borehole</span><span class="ja">地中</span></span>
+        <span class="settings-label"><span class="en">Borehole</span><span class="ja">地中</span><span class="zh">井下觀測</span></span>
         <span class="tog"><input type="checkbox" id="tog-borehole" checked onchange="toggleBoreholeVisible()"><span class="tog-track"></span></span>
     </label>
-    <div class="settings-title"><span class="en">Sound</span><span class="ja">音</span></div>
+    <div class="settings-title"><span class="en">Sound</span><span class="ja">音</span><span class="zh">音效</span></div>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">EEW Alert</span><span class="ja">EEW警報音</span></span>
+        <span class="settings-label"><span class="en">EEW Alert</span><span class="ja">EEW警報音</span><span class="zh">緊急地震速報警報音</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-eew-alert" checked onchange="muteEewAlert=!this.checked"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">EEW Report</span><span class="ja">EEW更新音</span></span>
+        <span class="settings-label"><span class="en">EEW Report</span><span class="ja">EEW更新音</span><span class="zh">緊急地震速報更新音</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-eew-report" checked onchange="muteEewReport=!this.checked"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Report</span><span class="ja">地震情報</span></span>
+        <span class="settings-label"><span class="en">Report</span><span class="ja">地震情報</span><span class="zh">地震資訊</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-report" checked onchange="muteReport=!this.checked"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Tsunami Warning</span><span class="ja">津波警報音</span></span>
+        <span class="settings-label"><span class="en">Tsunami Warning</span><span class="ja">津波警報音</span><span class="zh">海嘯警報音</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-tsunami-warning" checked onchange="muteTsunamiWarning=!this.checked"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Tsunami Advisory</span><span class="ja">津波注意報音</span></span>
+        <span class="settings-label"><span class="en">Tsunami Advisory</span><span class="ja">津波注意報音</span><span class="zh">海嘯注意報音</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-tsunami-advisory" checked onchange="muteTsunamiAdvisory=!this.checked"><span class="tog-track"></span></span>
     </label>
-    <div class="settings-title"><span class="en">Notifications</span><span class="ja">通知</span></div>
+    <div class="settings-title"><span class="en">Notifications</span><span class="ja">通知</span><span class="zh">通知</span></div>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Push Notifications</span><span class="ja">プッシュ通知</span></span>
+        <span class="settings-label"><span class="en">Push Notifications</span><span class="ja">プッシュ通知</span><span class="zh">推播通知</span></span>
         <span class="tog"><input type="checkbox" id="tog-notif-enabled" onchange="toggleNotifications()"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">EEW &amp; Tsunami Alerts</span><span class="ja">緊急地震速報・津波警報</span></span>
+        <span class="settings-label"><span class="en">EEW &amp; Tsunami Alerts</span><span class="ja">緊急地震速報・津波警報</span><span class="zh">緊急地震速報與海嘯警報</span></span>
         <span class="tog"><input type="checkbox" id="tog-notif-alerts" onchange="toggleAlertsTag()"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Earthquake Forecasts</span><span class="ja">地震動予測</span></span>
+        <span class="settings-label"><span class="en">Earthquake Forecasts</span><span class="ja">地震動予測</span><span class="zh">地震動預測</span></span>
         <span class="tog"><input type="checkbox" id="tog-notif-forecasts" onchange="toggleForecastsTag()"><span class="tog-track"></span></span>
     </label>
     <div class="settings-row">
-        <span class="settings-label"><span class="en">Notification Language</span><span class="ja">通知言語</span></span>
+        <span class="settings-label"><span class="en">Notification Language</span><span class="ja">通知言語</span><span class="zh">通知語言</span></span>
         <span class="lang-seg">
             <button type="button" class="lang-seg-btn" id="notif-lang-en" onclick="setNotificationLanguage('en')">EN</button>
             <button type="button" class="lang-seg-btn" id="notif-lang-ja" onclick="setNotificationLanguage('ja')">JA</button>
         </span>
     </div>
-    <div class="settings-title"><span class="en">Notifications via ntfy</span><span class="ja">ntfyによる通知</span></div>
+    <div class="settings-title"><span class="en">Notifications via ntfy</span><span class="ja">ntfyによる通知</span><span class="zh">透過ntfy的通知</span></div>
     <div class="settings-note">
         <span class="en">More reliable on mobile, but requires installing the ntfy app and manually subscribing.</span>
         <span class="ja">モバイルではより確実ですが、ntfyアプリのインストールと手動でのトピック登録が必要です。</span>
+        <span class="zh">在行動裝置上較為可靠，但需要安裝ntfy應用程式並手動訂閱。</span>
     </div>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">I use ntfy</span><span class="ja">ntfyを使用する</span></span>
+        <span class="settings-label"><span class="en">I use ntfy</span><span class="ja">ntfyを使用する</span><span class="zh">我使用ntfy</span></span>
         <span class="tog"><input type="checkbox" id="tog-ntfy-enabled" onchange="toggleNtfyEnabled()"><span class="tog-track"></span></span>
     </label>
     <div id="ntfy-subscribe-links"></div>
     <div id="ntfy-onesignal-warning" class="settings-note settings-note-warn" style="display:none">
         <span class="en">Both ntfy and OneSignal are enabled. For best reliability, consider turning off Push Notifications above and using ntfy only.</span>
         <span class="ja">ntfyとOneSignalの両方が有効です。信頼性を高めるため、上のプッシュ通知をオフにしてntfyのみを使用することをお勧めします。</span>
+        <span class="zh">ntfy與OneSignal目前皆已啟用。為提高可靠性，建議關閉上方的推播通知，僅使用ntfy。</span>
     </div>
-    <div class="settings-title"><span class="en">Timeline</span><span class="ja">タイムライン</span></div>
+    <div class="settings-title"><span class="en">Timeline</span><span class="ja">タイムライン</span><span class="zh">時間軸</span></div>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Lock timeline (ignore live data while replaying)</span><span class="ja">タイムライン固定（再生中はライブ更新を無視）</span></span>
+        <span class="settings-label"><span class="en">Lock timeline (ignore live data while replaying)</span><span class="ja">タイムライン固定（再生中はライブ更新を無視）</span><span class="zh">鎖定時間軸（重播時忽略即時資料）</span></span>
         <span class="tog"><input type="checkbox" id="tog-lock-timeline" onchange="setLockTimelineOnReplay(this.checked)"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Hide timeline</span><span class="ja">タイムラインを非表示</span></span>
+        <span class="settings-label"><span class="en">Hide timeline</span><span class="ja">タイムラインを非表示</span><span class="zh">隱藏時間軸</span></span>
         <span class="tog"><input type="checkbox" id="tog-hide-timeline" onchange="setHideTimelineFeature(this.checked)"><span class="tog-track"></span></span>
     </label>
 </div>
@@ -257,7 +263,7 @@
         <button class="bar-btn" onclick="stepReplay(60)">+1m</button>
         <button class="bar-btn" onclick="stepReplay(600)">+10m</button>
         <button class="bar-btn" onclick="stepReplay(3600)">+1h</button>
-        <button class="bar-btn" id="timeline-live-btn" onclick="exitReplay()"><span class="en">Live</span><span class="ja">ライブ</span></button>
+        <button class="bar-btn" id="timeline-live-btn" onclick="exitReplay()"><span class="en">Live</span><span class="ja">ライブ</span><span class="zh">即時</span></button>
     </div>
     <div id="timeline-track">
         <div id="timeline-gap-layer"></div>
@@ -272,6 +278,7 @@
     <span id="connection-status">Connecting…</span>
     <button class="bar-btn" onclick="setLanguage('en')" aria-label="Switch to English">EN</button>
     <button class="bar-btn" onclick="setLanguage('ja')" aria-label="日本語に切り替え">JA</button>
+    <button class="bar-btn" onclick="setLanguage('zh')" aria-label="切換至中文">ZH</button>
     <button class="bar-btn" id="settings-btn" onclick="toggleSettings()" aria-label="Settings">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
             <path d="M19.14 12.94c.04-.32.06-.61.06-.94 0-.32-.02-.61-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22l-1.92 3.32c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.04.64.09.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.03-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
@@ -294,11 +301,9 @@
             <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
         </svg>
     </a>
-    <!-- AGPL-3.0 section 13 requires a prominent offer of source to users
-         interacting with this server over the network. Keep this link. -->
-    <a class="bar-btn" id="github-btn" href="https://github.com/lukemattle/webquake" target="_blank" rel="noopener noreferrer" aria-label="Source code on GitHub">
+    <a class="bar-btn" id="github-btn" href="https://github.com/lukemattle/webquake" target="_blank" rel="noopener noreferrer" aria-label="View source on GitHub">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-            <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.5 11.5 0 0 1 3-.405c1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+            <path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58l-.01-2.05c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.96 0-1.32.47-2.39 1.24-3.23-.12-.31-.54-1.53.12-3.18 0 0 1.01-.32 3.3 1.23a11.4 11.4 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.87.12 3.18.77.84 1.24 1.91 1.24 3.23 0 4.63-2.81 5.65-5.49 5.95.43.37.82 1.1.82 2.22l-.01 3.29c0 .32.21.7.82.58A12.01 12.01 0 0 0 24 12.5C24 5.87 18.63.5 12 .5z"/>
         </svg>
     </a>
     <span id="jst-time"></span>

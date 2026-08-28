@@ -270,8 +270,9 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 .ntfy-topic-row .ntfy-btn { flex-shrink: 0; padding: 4px 10px; }
 
 /* hide language variants based on document language */
-html[lang="en"] .ja { display: none; }
-html[lang="ja"] .en { display: none; }
+html[lang="en"] .ja, html[lang="en"] .zh { display: none; }
+html[lang="ja"] .en, html[lang="ja"] .zh { display: none; }
+html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
 
 /* ── Station click popup ── */
 #station-popup, #tw-quake-popup {

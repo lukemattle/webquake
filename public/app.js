@@ -64,7 +64,11 @@ function setSidebarFilter(mode) {
 const NOTIF_LANG_KEY = 'webquake_notif_lang';
 
 function getNotificationLanguage() {
-    return localStorage.getItem(NOTIF_LANG_KEY) || currentLanguage;
+    // No zh notification content exists (see main.py's en/ja-only NTFY_TOPIC_*/
+    // OneSignal categories) - a zh UI with no explicit override falls back to en.
+    const stored = localStorage.getItem(NOTIF_LANG_KEY);
+    if (stored) return stored;
+    return currentLanguage === 'zh' ? 'en' : currentLanguage;
 }
 
 function updateNotifLanguageUI(lang) {
@@ -133,42 +137,48 @@ function renderNtfySubscribeLinks() {
     const lang = getNotificationLanguage();
     const langTopics = NTFY_TOPICS[lang] || NTFY_TOPICS.en;
     const topics = [
-        { key: langTopics.alerts, en: 'EEW &amp; Tsunami Alerts', ja: '緊急地震速報・津波警報' },
-        { key: langTopics.forecasts, en: 'Earthquake Forecasts', ja: '地震動予測' },
+        { key: langTopics.alerts, en: 'EEW &amp; Tsunami Alerts', ja: '緊急地震速報・津波警報', zh: '緊急地震速報與海嘯警報' },
+        { key: langTopics.forecasts, en: 'Earthquake Forecasts', ja: '地震動予測', zh: '地震動預測' },
     ];
+    // lang here is always 'en'/'ja' (getNotificationLanguage falls back off
+    // 'zh' - no zh notification content exists), but this surrounding chrome
+    // text is still shown to zh UI users, so it gets its own zh translation.
     let html = `<div class="settings-note">
         <span class="en">Showing topics for notification language: ${lang.toUpperCase()}. Change it above to switch.</span>
         <span class="ja">通知言語: ${lang.toUpperCase()} のトピックを表示中です。上の設定で切り替えられます。</span>
+        <span class="zh">目前顯示通知語言為 ${lang.toUpperCase()} 的主題。可於上方設定切換。</span>
     </div>`;
     if (platform === 'android') {
         // The Android app supports ntfy:// deep links straight to the subscribe screen.
         html += `<a class="ntfy-btn" href="${NTFY_APP_LINKS.android}" target="_blank" rel="noopener">
-            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span>
+            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span><span class="zh">取得ntfy應用程式</span>
         </a>`;
         for (const t of topics) {
             html += `<a class="ntfy-btn" href="ntfy://${NTFY_SERVER}/${t.key}">
-                <span class="en">Subscribe: ${t.en}</span><span class="ja">登録: ${t.ja}</span>
+                <span class="en">Subscribe: ${t.en}</span><span class="ja">登録: ${t.ja}</span><span class="zh">訂閱：${t.zh}</span>
             </a>`;
         }
         html += `<div class="settings-note">
             <span class="en">If the app isn't installed yet, install it first, then tap the subscribe links again. Server: ${NTFY_SERVER}</span>
             <span class="ja">アプリが未インストールの場合は、先にインストールしてから登録リンクを再度タップしてください。サーバー: ${NTFY_SERVER}</span>
+            <span class="zh">若尚未安裝應用程式，請先安裝後再次點擊訂閱連結。伺服器：${NTFY_SERVER}</span>
         </div>`;
     } else if (platform === 'ios') {
         // The ntfy iOS app doesn't support ntfy:// deep links yet (Android-only),
         // so subscribing has to be done manually inside the app.
         html += `<a class="ntfy-btn" href="${NTFY_APP_LINKS.ios}" target="_blank" rel="noopener">
-            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span>
+            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span><span class="zh">取得ntfy應用程式</span>
         </a>`;
         html += `<div class="settings-note">
             <span class="en">The iOS app can't be deep-linked yet. After installing: open ntfy &rarr; Settings &rarr; Default Server, enter <code>https://${NTFY_SERVER}</code>, then tap "+" and subscribe to each topic below by name.</span>
             <span class="ja">iOS版アプリはまだディープリンクに対応していません。インストール後: ntfyを開く → 設定 → デフォルトサーバー に <code>https://${NTFY_SERVER}</code> を入力し、「+」をタップして以下のトピック名を登録してください。</span>
+            <span class="zh">iOS版應用程式尚不支援深層連結。安裝後：開啟ntfy &rarr; 設定 &rarr; 預設伺服器，輸入 <code>https://${NTFY_SERVER}</code>，然後點擊「+」並依名稱訂閱下方各主題。</span>
         </div>`;
         for (const t of topics) {
             html += `<div class="ntfy-topic-row">
                 <span class="ntfy-topic-name">${t.key}</span>
                 <button type="button" class="ntfy-btn ntfy-copy-btn" data-topic="${t.key}">
-                    <span class="en">Copy</span><span class="ja">コピー</span>
+                    <span class="en">Copy</span><span class="ja">コピー</span><span class="zh">複製</span>
                 </button>
             </div>`;
         }
@@ -176,10 +186,11 @@ function renderNtfySubscribeLinks() {
         html += `<div class="settings-note">
             <span class="en">On desktop, ntfy still relies on browser push and has the same reliability limits as above. You can open these topics in a browser instead:</span>
             <span class="ja">デスクトップでは、ntfyもブラウザのプッシュ通知に依存するため上記と同じ制約があります。代わりにブラウザで以下のトピックを開くこともできます：</span>
+            <span class="zh">在桌面版中，ntfy仍依賴瀏覽器推播通知，因此有與上述相同的可靠性限制。您也可以改用瀏覽器開啟以下主題：</span>
         </div>`;
         for (const t of topics) {
             html += `<a class="ntfy-btn" href="https://${NTFY_SERVER}/${t.key}" target="_blank" rel="noopener">
-                <span class="en">Open: ${t.en}</span><span class="ja">開く: ${t.ja}</span>
+                <span class="en">Open: ${t.en}</span><span class="ja">開く: ${t.ja}</span><span class="zh">開啟：${t.zh}</span>
             </a>`;
         }
     }
@@ -232,9 +243,11 @@ async function toggleNotifications() {
                 await OneSignal.User.PushSubscription.optIn();
                 OneSignal.User.setLanguage(getNotificationLanguage());
             } else {
-                alert(currentLanguage === 'ja'
-                    ? '通知が許可されていません。ブラウザの設定を確認してください。'
-                    : 'Notification permission was not granted. Please check your browser settings.');
+                alert(t(
+                    'Notification permission was not granted. Please check your browser settings.',
+                    '通知が許可されていません。ブラウザの設定を確認してください。',
+                    '尚未取得通知權限，請檢查瀏覽器設定。'
+                ));
             }
         } else {
             await OneSignal.User.PushSubscription.optOut();
@@ -902,6 +915,12 @@ const TSUNAMI_LEVEL_LABELS_JA = {
     'Warning':      '津波警報',
     'Major Warning':'大津波警報',
 };
+const TSUNAMI_LEVEL_LABELS_ZH = {
+    'Slight sea level change': '海面輕微變化',
+    'Advisory':     '海嘯注意報',
+    'Warning':      '海嘯警報',
+    'Major Warning':'大海嘯警報',
+};
 
 // Max intensity ranks are cached at data-change time (updateRegionColors,
 // _setStationData, setJmaStations) so this stays O(1) — updateMapKey runs on
@@ -943,7 +962,7 @@ function updateMapKey() {
     let html = '';
     if (maxIntRank >= 1) {
         html += '<div class="key-section">';
-        html += '<div class="key-title"><span class="en">Intensity</span><span class="ja">震度</span></div>';
+        html += '<div class="key-title"><span class="en">Intensity</span><span class="ja">震度</span><span class="zh">震度</span></div>';
         for (let r = 1; r <= maxIntRank; r++) {
             const lvl = INT_LEVELS[r - 1];
             html += `<div class="key-row"><span class="key-swatch" style="background:${intColor(lvl)};color:${intTextColor(lvl)}">${lvl}</span></div>`;
@@ -953,20 +972,21 @@ function updateMapKey() {
 
     if (maxTsuRank >= 0) {
         html += '<div class="key-section">';
-        html += '<div class="key-title"><span class="en">Tsunami</span><span class="ja">津波</span></div>';
+        html += '<div class="key-title"><span class="en">Tsunami</span><span class="ja">津波</span><span class="zh">海嘯</span></div>';
         for (let r = 0; r <= maxTsuRank; r++) {
             const lvl = TSUNAMI_LEVELS[r];
             const c = tsunamiLevelColor(lvl), tc = tsunamiLevelTextColor(lvl);
             html += `<div class="key-row"><span class="key-swatch" style="background:${c};color:${tc}"></span>`
-                  + `<span class="key-label"><span class="en">${TSUNAMI_LEVEL_LABELS_EN[lvl]}</span><span class="ja">${TSUNAMI_LEVEL_LABELS_JA[lvl]}</span></span></div>`;
+                  + `<span class="key-label"><span class="en">${TSUNAMI_LEVEL_LABELS_EN[lvl]}</span><span class="ja">${TSUNAMI_LEVEL_LABELS_JA[lvl]}</span><span class="zh">${TSUNAMI_LEVEL_LABELS_ZH[lvl]}</span></span></div>`;
         }
         html += '</div>';
     }
 
     el.innerHTML = html;
     el.classList.toggle('visible', html !== '');
-    el.title = currentLanguage === 'ja' ? '凡例' : 'Map key';
+    el.title = t('Map key', '凡例', '圖例');
 }
+
 
 // ── NIED station dots (canvas overlay) ───────────────────────────────
 let lastStations = [];
@@ -1630,6 +1650,11 @@ function _formatAge(ms) {
         const m = Math.floor(s / 60), r = s % 60;
         return r > 0 ? `${m}分${r}秒前` : `${m}分前`;
     }
+    if (currentLanguage === 'zh') {
+        if (s < 60) return `${s}秒前`;
+        const m = Math.floor(s / 60), r = s % 60;
+        return r > 0 ? `${m}分${r}秒前` : `${m}分前`;
+    }
     if (s < 60) return `${s}s ago`;
     const m = Math.floor(s / 60), r = s % 60;
     return r > 0 ? `${m}m ${r}s ago` : `${m}m ago`;
@@ -1641,15 +1666,17 @@ function showStationPopup(st, px, py, source) {
     if (source === 'exptech') {
         badgeEl.textContent = 'TREM-Net';
         badgeEl.className = 'quake-source quake-source-exptech';
-        badgeEl.title = currentLanguage === 'ja'
-            ? 'ExpTech TREM-Net（台湾）のリアルタイム観測データ。中央気象署（CWA）の公式データではありません。'
-            : 'ExpTech TREM-Net (Taiwan) real-time station data — a community sensor network, not an official CWA source.';
+        badgeEl.title = t(
+            'ExpTech TREM-Net (Taiwan) real-time station data — a community sensor network, not an official CWA source.',
+            'ExpTech TREM-Net（台湾）のリアルタイム観測データ。中央気象署（CWA）の公式データではありません。',
+            'ExpTech TREM-Net（台灣）即時觀測資料，屬社群感測網路，非中央氣象署（CWA）官方資料。'
+        );
         badgeEl.style.display = '';
     } else {
         badgeEl.style.display = 'none';
     }
     const isSnet = source === 'snet';
-    const intLabel = (currentLanguage === 'ja' ? '震度 ' : 'Int. ') + (st.raw != null ? st.raw : (st.int ?? '–'));
+    const intLabel = t('Int. ', '震度 ', '震度 ') + (st.raw != null ? st.raw : (st.int ?? '–'));
     document.getElementById('sp-int-label').textContent = intLabel;
     document.getElementById('sp-int-bar').style.background = intColor(st.int);
     const pgaRow = document.getElementById('sp-pga-row');
@@ -1662,7 +1689,7 @@ function showStationPopup(st, px, py, source) {
     }
     const boreholeRow = document.getElementById('sp-borehole-row');
     if (boreholeVisible && st.borehole_int != null) {
-        const bLabel = (currentLanguage === 'ja' ? '地中 ' : 'Borehole ') + (st.borehole_raw != null ? st.borehole_raw : st.borehole_int);
+        const bLabel = t('Borehole ', '地中 ', '井下 ') + (st.borehole_raw != null ? st.borehole_raw : st.borehole_int);
         document.getElementById('sp-borehole-label').textContent = bLabel;
         document.getElementById('sp-borehole-bar').style.background = intColor(st.borehole_int);
         boreholeRow.style.display = 'flex';
@@ -1672,8 +1699,8 @@ function showStationPopup(st, px, py, source) {
     const ageRow = document.getElementById('sp-age-row');
     if (_snetAgeInterval) { clearInterval(_snetAgeInterval); _snetAgeInterval = null; }
     if (isSnet && snetDataTime) {
-        const prefix = currentLanguage === 'ja' ? '海底観測 · ' : 'Seafloor · ';
-        const tip    = currentLanguage === 'ja' ? '海底観測点は約1分ごとに更新されます' : 'Seafloor stations update every ~1 min';
+        const prefix = t('Seafloor · ', '海底観測 · ', '海底觀測 · ');
+        const tip    = t('Seafloor stations update every ~1 min', '海底観測点は約1分ごとに更新されます', '海底觀測站約每1分鐘更新一次');
         const updateAge = () => {
             ageRow.innerHTML = `<span title="${tip}" style="text-decoration:underline dotted;text-underline-offset:2px;cursor:help">${prefix + _formatAge(snetDataTime)}</span>`;
         };
@@ -1703,9 +1730,9 @@ function showTwQuakePopup(px, py) {
     if (!activeTwQuakeData) return;
     const d = activeTwQuakeData;
     const isJa = currentLanguage === 'ja';
-    document.getElementById('twp-loc').textContent = d.location || '–';
+    document.getElementById('twp-loc').textContent = (currentLanguage === 'zh' && d.location_zh) ? d.location_zh : (d.location || '–');
     document.getElementById('twp-mag').innerHTML = 'M <b>' + (d.magnitude ?? '–') + '</b>';
-    document.getElementById('twp-depth').innerHTML = (isJa ? '深さ' : 'Depth') + ' <b>' + (d.depth != null ? d.depth + ' km' : '–') + '</b>';
+    document.getElementById('twp-depth').innerHTML = t('Depth', '深さ', '深度') + ' <b>' + (d.depth != null ? d.depth + ' km' : '–') + '</b>';
     twQuakePopup.style.display = 'block';
     twQuakePopup.style.left = px + 'px';
     twQuakePopup.style.top  = py + 'px';
@@ -2185,6 +2212,14 @@ function kindLabelJa(code) {
     return '予報';
 }
 
+function kindLabelZh(code) {
+    const t = kindTier(code);
+    if (t === 'major')    return '大海嘯';
+    if (t === 'warning')  return '警報';
+    if (t === 'advisory') return '注意報';
+    return '預報';
+}
+
 function renderTsunamiCard() {
     const panel = document.getElementById('tsunami-panel');
     if (!showJapan() || (!activeTsunamiData && !activeTsunamiObs)) {
@@ -2203,7 +2238,8 @@ function renderTsunamiCard() {
         const ltc = tsunamiLevelTextColor(level);
         const levelEn = {'Major Warning':'Major Tsunami Warning','Warning':'Tsunami Warning','Advisory':'Tsunami Advisory','Slight sea level change':'Slight Sea Level Change'}[level] || level;
         const levelJa = {'Major Warning':'大津波警報','Warning':'津波警報','Advisory':'津波注意報','Slight sea level change':'若干の海面変動'}[level] || level;
-        html += `<div class="tsun-header"><span class="tsun-level-badge" style="background:${lc};color:${ltc}"><span class="en">${levelEn}</span><span class="ja">${levelJa}</span></span></div>`;
+        const levelZh = {'Major Warning':'大海嘯警報','Warning':'海嘯警報','Advisory':'海嘯注意報','Slight sea level change':'海面輕微變化'}[level] || level;
+        html += `<div class="tsun-header"><span class="tsun-level-badge" style="background:${lc};color:${ltc}"><span class="en">${levelEn}</span><span class="ja">${levelJa}</span><span class="zh">${levelZh}</span></span></div>`;
         html += `<div class="tsun-time">${formatJst(d.report_time)}</div>`;
 
         const KIND_PRIORITY = {'major':4,'warning':3,'advisory':2,'forecast':1};
@@ -2219,12 +2255,12 @@ function renderTsunamiCard() {
         // gauge-limited observations — so it must not render as a plain "Nm".
         function fmtHeight(h, hCond, over) {
             if (h > 0) return over
-                ? `<span class="en">over ${h}m</span><span class="ja">${h}m超</span>`
+                ? `<span class="en">over ${h}m</span><span class="ja">${h}m超</span><span class="zh">超過${h}公尺</span>`
                 : h + 'm';
-            if (hCond === '巨大') return `<span class="en">Huge</span><span class="ja">巨大</span>`;
-            if (hCond === '高い') return `<span class="en">High</span><span class="ja">高い</span>`;
-            if (hCond === '微弱') return `<span class="en">Faint</span><span class="ja">微弱</span>`;
-            if (hCond === '欠測') return `<span class="en">No Data</span><span class="ja">欠測</span>`;
+            if (hCond === '巨大') return `<span class="en">Huge</span><span class="ja">巨大</span><span class="zh">巨大</span>`;
+            if (hCond === '高い') return `<span class="en">High</span><span class="ja">高い</span><span class="zh">高</span>`;
+            if (hCond === '微弱') return `<span class="en">Faint</span><span class="ja">微弱</span><span class="zh">微弱</span>`;
+            if (hCond === '欠測') return `<span class="en">No Data</span><span class="ja">欠測</span><span class="zh">無資料</span>`;
             return '–';
         }
         // Compact "DD日HH:MM" JST formatting, matching JMA's own forecast displays
@@ -2236,13 +2272,13 @@ function renderTsunamiCard() {
         // Forecast region status before a numeric/qualitative max height is known:
         // either an estimated arrival time or a "presumed arriving" / "confirmed" status
         function fmtArrivalStatus(cond, arrivalTs) {
-            if (cond === '津波到達中と推測') return `<span class="en">Tsunami presumed arriving</span><span class="ja">津波到達中と推測</span>`;
-            if (cond === '第１波の到達を確認') return `<span class="en">First wave confirmed</span><span class="ja">第１波の到達を確認</span>`;
-            if (cond === '第１波識別不能') return `<span class="en">First wave unclear</span><span class="ja">第１波識別不能</span>`;
-            if (cond === '不明') return `<span class="en">Unknown</span><span class="ja">不明</span>`;
+            if (cond === '津波到達中と推測') return `<span class="en">Tsunami presumed arriving</span><span class="ja">津波到達中と推測</span><span class="zh">推測海嘯已抵達</span>`;
+            if (cond === '第１波の到達を確認') return `<span class="en">First wave confirmed</span><span class="ja">第１波の到達を確認</span><span class="zh">已確認第一波抵達</span>`;
+            if (cond === '第１波識別不能') return `<span class="en">First wave unclear</span><span class="ja">第１波識別不能</span><span class="zh">無法辨識第一波</span>`;
+            if (cond === '不明') return `<span class="en">Unknown</span><span class="ja">不明</span><span class="zh">不明</span>`;
             if (arrivalTs) {
                 const t = fmtCompactJst(arrivalTs);
-                return `<span class="en">Est. arrival ${t}</span><span class="ja">到達予想 ${t}</span>`;
+                return `<span class="en">Est. arrival ${t}</span><span class="ja">到達予想 ${t}</span><span class="zh">預估抵達 ${t}</span>`;
             }
             return '–';
         }
@@ -2259,14 +2295,18 @@ function renderTsunamiCard() {
                 regionCode: (d.region_codes || [])[i] || '',
             })).filter(r => !TSUNAMI_LIFTED_KINDS.has(r.code)); // stood-down coasts (replayed history)
             rows.sort((a, b) => heightSortKey(b.h, b.hCond, b.code) - heightSortKey(a.h, a.hCond, a.code));
-            html += `<div class="tsun-section-label"><span class="en">Forecast Regions</span><span class="ja">予報・警報地域</span></div><div class="tsun-list">`;
+            html += `<div class="tsun-section-label"><span class="en">Forecast Regions</span><span class="ja">予報・警報地域</span><span class="zh">預報・警報地區</span></div><div class="tsun-list">`;
             rows.forEach(r => {
                 const kc = kindColor(r.code), ktc = kindTextColor(r.code);
                 // Before a max wave height/condition is reported, show the first-wave
                 // arrival status (estimated arrival time, "presumed arriving", etc.)
                 const heightCell = (r.h <= 0 && !r.hCond) ? fmtArrivalStatus(r.fCond, r.arrival) : fmtHeight(r.h, r.hCond, r.over);
                 const clickable = tsunamiRegionCentroids[String(r.regionCode)] ? ' tsun-row-clickable' : '';
-                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span></span><span class="tsun-row-height">${heightCell}</span><span class="tsun-row-kind" style="background:${kc};color:${ktc}"><span class="en">${kindLabelEn(r.code)}</span><span class="ja">${kindLabelJa(r.code)}</span></span></div>`;
+                // r.en/r.ja are JMA region names with no zh translation table (would
+                // need one covering every JMA tsunami forecast area code, akin to
+                // eng_codes.py but for Chinese - not built, out of scope for now) -
+                // zh mode falls back to the English name rather than guessing one.
+                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span><span class="zh">${r.ja}</span></span><span class="tsun-row-height">${heightCell}</span><span class="tsun-row-kind" style="background:${kc};color:${ktc}"><span class="en">${kindLabelEn(r.code)}</span><span class="ja">${kindLabelJa(r.code)}</span><span class="zh">${kindLabelZh(r.code)}</span></span></div>`;
             });
             html += '</div>';
         }
@@ -2280,10 +2320,10 @@ function renderTsunamiCard() {
                 regionCode: (d.obs_region_codes || [])[i] || '',
             }));
             rows.sort((a, b) => heightSortKey(b.h, b.hCond, '') - heightSortKey(a.h, a.hCond, ''));
-            html += `<div class="tsun-sep"></div><div class="tsun-section-label"><span class="en">Observations</span><span class="ja">観測</span></div><div class="tsun-list">`;
+            html += `<div class="tsun-sep"></div><div class="tsun-section-label"><span class="en">Observations</span><span class="ja">観測</span><span class="zh">觀測</span></div><div class="tsun-list">`;
             rows.forEach(r => {
                 const clickable = tsunamiRegionCentroids[String(r.regionCode)] ? ' tsun-row-clickable' : '';
-                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span></span><span class="tsun-row-height" style="color:#4fc3f7">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
+                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span><span class="zh">${r.ja}</span></span><span class="tsun-row-height" style="color:#4fc3f7">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
             });
             html += '</div>';
         }
@@ -2299,11 +2339,15 @@ function renderTsunamiCard() {
         }));
         rows.sort((a, b) => heightSortKey(b.h, b.hCond, '') - heightSortKey(a.h, a.hCond, ''));
         if (d) html += '<div class="tsun-sep"></div>';
-        html += `<div class="tsun-section-label"><span class="en">Offshore Obs.</span><span class="ja">沖合観測</span></div><div class="tsun-list">`;
+        html += `<div class="tsun-section-label"><span class="en">Offshore Obs.</span><span class="ja">沖合観測</span><span class="zh">近海觀測</span></div><div class="tsun-list">`;
         rows.forEach(r => {
             const estBadge = r.estimated
-                ? '<span class="tsun-row-est-badge" title="Estimated location — exact station position unknown / 推定位置 — 観測点の正確な位置は不明">~</span>' : '';
-            html += `<div class="tsun-row"><span class="tsun-row-name"><span class="en">${r.nameEn}${estBadge}</span><span class="ja">${r.nameJa}${estBadge}</span></span><span class="tsun-row-height" style="color:#81c995">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
+                ? '<span class="tsun-row-est-badge" title="Estimated location — exact station position unknown / 推定位置 — 観測点の正確な位置は不明 / 推估位置－確切觀測站位置不明">~</span>' : '';
+            // nameEn already falls back to the Japanese name when no English one
+            // exists (see the .map above) - zh does the same, following that
+            // established fallback chain rather than a separate zh translation
+            // table for station names (none exists, see the tsun-row-name note above).
+            html += `<div class="tsun-row"><span class="tsun-row-name"><span class="en">${r.nameEn}${estBadge}</span><span class="ja">${r.nameJa}${estBadge}</span><span class="zh">${r.nameJa}${estBadge}</span></span><span class="tsun-row-height" style="color:#81c995">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
         });
         html += '</div>';
     }
@@ -2334,6 +2378,7 @@ function buildEewCard(data) {
     const isWarning  = data.warning;
     const typeEnText = isPlum ? 'EEW (PLUM Method)' : isFlash ? 'EEW (Flash Report)' : (isWarning ? 'EEW (Warning)' : 'EEW (Forecast)');
     const typeJaText = isPlum ? '緊急地震速報（PLUM法）' : isFlash ? '緊急地震速報（速報）' : (isWarning ? '緊急地震速報（警報）' : '緊急地震速報（予報）');
+    const typeZhText = isPlum ? '緊急地震速報（PLUM法）' : isFlash ? '緊急地震速報（速報）' : (isWarning ? '緊急地震速報（警報）' : '緊急地震速報（預報）');
     const reportNo   = data.report_num || '–';
     const maxInt     = (isPlum || isFlash) ? '?' : (data.max_int != null ? String(data.max_int) : '–');
     const locEn      = (data.epi_location_en && data.epi_location_en.length ? data.epi_location_en[0] : '–');
@@ -2345,22 +2390,24 @@ function buildEewCard(data) {
     const lpgm       = (isPlum || isFlash) ? null : lpgmClass(data.max_lpgm);
     const finalEn    = data.last_report ? '  [Final]' : '';
     const finalJa    = data.last_report ? '  [最終]' : '';
+    const finalZh    = data.last_report ? '  [最終]' : '';
     const div = document.createElement('div');
     div.className = 'eew-card';
     div.innerHTML =
-        `<div class="eew-type"><span class="en">${typeEnText}  #${reportNo}${finalEn}</span><span class="ja">${typeJaText}  第${reportNo}報${finalJa}</span></div>` +
+        `<div class="eew-type"><span class="en">${typeEnText}  #${reportNo}${finalEn}</span><span class="ja">${typeJaText}  第${reportNo}報${finalJa}</span><span class="zh">${typeZhText}  第${reportNo}報${finalZh}</span></div>` +
         `<div class="eew-int-box" style="background:${(isPlum || isFlash) ? '#555' : intColor(maxInt)};color:${(isPlum || isFlash) ? '#aaa' : intTextColor(maxInt)}">${maxInt}</div>` +
         (lpgm ? `<div class="eew-lpgm-box" style="background:${lpgmColor(lpgm)};color:${lpgmTextColor(lpgm)}">` +
                     `<span class="eew-lpgm-label">` +
                         `<span class="en">Est. max long-period<br>ground motion class</span>` +
                         `<span class="ja">推定 最大長周期<br>地震動階級</span>` +
+                        `<span class="zh">預估 最大長週期<br>地震動階級</span>` +
                     `</span>` +
                     `<span class="eew-lpgm-val">${lpgm}</span>` +
                 `</div>` : '') +
-        `<div class="eew-location"><span class="en">${locEn}</span><span class="ja">${locJa}</span></div>` +
-        `<div class="eew-detail">M ${mag}  Depth ${depth} km</div>` +
-        (isPlum ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Hypothetical source – no detailed info</span><span class="ja">仮定震源要素</span></div>` : '') +
-        (isFlash ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Intensity forecast not yet available</span><span class="ja">震度予測未計算</span></div>` : '') +
+        `<div class="eew-location"><span class="en">${locEn}</span><span class="ja">${locJa}</span><span class="zh">${locJa}</span></div>` +
+        `<div class="eew-detail">M ${mag}  <span class="en">Depth</span><span class="ja">深さ</span><span class="zh">深度</span> ${depth} km</div>` +
+        (isPlum ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Hypothetical source – no detailed info</span><span class="ja">仮定震源要素</span><span class="zh">假定震源要素</span></div>` : '') +
+        (isFlash ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Intensity forecast not yet available</span><span class="ja">震度予測未計算</span><span class="zh">震度預測尚未計算</span></div>` : '') +
         `<div class="eew-time">${quakeTime}</div>`;
     return div;
 }
@@ -2389,12 +2436,12 @@ function buildTwEewCard(data) {
     const div = document.createElement('div');
     div.className = 'eew-card';
     div.innerHTML =
-        `<div class="eew-type">Taiwan EEW  #${data.serial ?? '–'}` +
+        `<div class="eew-type"><span class="en">Taiwan EEW</span><span class="ja">台湾EEW</span><span class="zh">台灣地震速報</span>  #${data.serial ?? '–'}` +
             (isCwa ? ` <span class="quake-source quake-source-cwa" style="font-size:0.85em">CWA</span>` : '') +
         `</div>` +
         `<div class="eew-int-box" style="background:${maxLabel ? intColor(maxLabel) : '#555'};color:${maxLabel ? intTextColor(maxLabel) : '#aaa'}">${maxLabel ?? '?'}</div>` +
         `<div class="eew-location">${eq.loc || '–'}</div>` +
-        `<div class="eew-detail">M ${eq.mag ?? '–'}  Depth ${eq.depth ?? '–'} km</div>` +
+        `<div class="eew-detail">M ${eq.mag ?? '–'}  <span class="en">Depth</span><span class="ja">深さ</span><span class="zh">深度</span> ${eq.depth ?? '–'} km</div>` +
         `<div class="eew-time">${eq.time != null ? formatCwaTime(eq.time) : '–'}</div>`;
     return div;
 }
@@ -2429,6 +2476,11 @@ function renderEewPanels() {
     container.innerHTML = '';
     const jpEews   = showJapan()  ? activeEews   : new Map();
     const twEews   = showTaiwan() ? activeTwEews : new Map();
+    // CWA post-event reports (activeTwQuakeData) never render here - unlike
+    // JMA EEW/live Taiwan EEW, they're never "in progress"/live, only ever
+    // a finalized historical report, so they don't belong in this live-status
+    // panel. They still get an epicenter marker/popup, region coloring, and
+    // their own sidebar entry - see the tw_earthquake displayData handler.
     if (jpEews.size === 0 && twEews.size === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
@@ -2481,23 +2533,34 @@ let lastQuakeData = [];
 let lastTwHistoryData = []; // Taiwan/CWA equivalent of lastQuakeData, fed by tw_history
 const wsQuakeBuffer = new Map(); // quake_time (unix seconds) → ws entry
 
+// Small 3-way translation helper for strings built in JS (as opposed to the
+// static <span class="en">/.ja/.zh markup pattern used directly in HTML/
+// generated HTML, which the CSS lang-attribute rules handle on their own).
+function t(en, ja, zh) {
+    return currentLanguage === 'ja' ? ja : currentLanguage === 'zh' ? zh : en;
+}
+
 function setLanguage(lang) {
     currentLanguage = lang;
     document.documentElement.lang = lang;
     const boreholeRow = document.getElementById('sp-borehole-row');
-    if (boreholeRow) boreholeRow.title = lang === 'ja' ? '地中観測点' : 'Underground station';
+    if (boreholeRow) boreholeRow.title = t('Underground station', '地中観測点', '井下觀測站');
     const mapKey = document.getElementById('map-key');
-    if (mapKey) mapKey.title = lang === 'ja' ? '凡例' : 'Map key';
+    if (mapKey) mapKey.title = t('Map key', '凡例', '圖例');
     renderSidebar(lastQuakeData);
-    // Follow the UI language for notifications unless the user has set an explicit override
+    // Follow the UI language for notifications unless the user has set an explicit
+    // override. Push notification content only exists in en/ja (see main.py's
+    // NTFY_TOPIC_*_EN/_JA and OneSignal 'warnings'/'warnings_ja' categories) - a
+    // zh UI has no zh notification category to switch to, so it falls back to en.
     if (!localStorage.getItem(NOTIF_LANG_KEY)) {
-        updateNotifLanguageUI(lang);
-        if (window.OneSignal) window.OneSignal.User.setLanguage(lang);
+        const notifLang = lang === 'zh' ? 'en' : lang;
+        updateNotifLanguageUI(notifLang);
+        if (window.OneSignal) window.OneSignal.User.setLanguage(notifLang);
     }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    setLanguage(window.__WEBQUAKE_LANG === 'ja' ? 'ja' : 'en');
+    setLanguage(window.__WEBQUAKE_LANG === 'ja' ? 'ja' : window.__WEBQUAKE_LANG === 'zh' ? 'zh' : 'en');
     updateDataSourceFilterUI();
     updateSidebarFilterUI();
     reapplyDataSourceFilter();
@@ -2521,18 +2584,18 @@ function updateConnectionStatus(text, bg) {
 function monitorConnection() {
     const age = Date.now() - lastMessageTime;
     if (age < 1500) {
-        updateConnectionStatus(currentLanguage === 'ja' ? '接続中' : 'Connected', '#8f8');
+        updateConnectionStatus(t('Connected', '接続中', '已連線'), '#8f8');
     } else if (age < 5000) {
-        updateConnectionStatus(currentLanguage === 'ja' ? '不安定' : 'Unstable', '#ff8');
+        updateConnectionStatus(t('Unstable', '不安定', '不穩定'), '#ff8');
     } else {
-        updateConnectionStatus(currentLanguage === 'ja' ? '切断' : 'Disconnected', '#f44');
+        updateConnectionStatus(t('Disconnected', '切断', '已斷線'), '#f44');
     }
 }
 setInterval(monitorConnection, 1000);
 
 function createWebSocket() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    updateConnectionStatus('Connecting…', '#555');
+    updateConnectionStatus(t('Connecting…', '接続しています…', '連線中…'), '#555');
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const socket = new WebSocket(`${proto}://${location.host}/ws`);
@@ -2544,7 +2607,7 @@ function createWebSocket() {
     socket.addEventListener('open', () => {
         lastMessageTime = Date.now();
         connectionAttempts = 0;
-        updateConnectionStatus('Connected', '#8f8');
+        updateConnectionStatus(t('Connected', '接続中', '已連線'), '#8f8');
     });
 
     socket.addEventListener('error', e => console.error('WS error', e));
@@ -2553,7 +2616,7 @@ function createWebSocket() {
         clearInterval(pingInterval);
         connectionAttempts++;
         const delay = Math.min(1000 * connectionAttempts, 30000);
-        updateConnectionStatus(`Reconnecting… (${connectionAttempts})`, '#f80');
+        updateConnectionStatus(t(`Reconnecting… (${connectionAttempts})`, `再接続しています… (${connectionAttempts})`, `重新連線中…（${connectionAttempts}）`), '#f80');
         reconnectTimer = setTimeout(createWebSocket, delay);
     });
 
@@ -2674,6 +2737,7 @@ function addWsQuakeToSidebar(data) {
         is_volcanic: data.is_volcanic ?? existing.is_volcanic ?? false,
         loc_en:     (data.epi_location_en && data.epi_location_en[0]) || existing.loc_en || null,
         loc_jp:     (data.epi_location_jp && data.epi_location_jp[0]) || existing.loc_jp || null,
+        matched_tw: data.matched_tw ?? existing.matched_tw ?? null,
     });
     renderSidebar(lastQuakeData);
 }
@@ -2692,24 +2756,30 @@ function formatCttTime(ctt) {
     return `${ctt.slice(8, 10)}:${ctt.slice(10, 12)}`;
 }
 
-function jmaDetailUrl(ctt, isJa) {
-    return `https://www.data.jma.go.jp/multi/quake/quake_detail.html?eventID=${ctt}&lang=${isJa ? 'jp' : 'en'}`;
+// JMA has no Chinese site - zh mode reuses the Japanese page (useJp), same as
+// it reuses the Japanese place name below rather than showing an English one.
+function jmaDetailUrl(ctt, useJp) {
+    return `https://www.data.jma.go.jp/multi/quake/quake_detail.html?eventID=${ctt}&lang=${useJp ? 'jp' : 'en'}`;
 }
 
 // Normalizes a JMA history entry or a WS buffer entry into a common shape so
 // per-field provenance (which source contributed the currently-displayed value)
 // can be tracked when several reports describe the same earthquake.
-function normalizeJmaCandidate(q, isJa) {
+function normalizeJmaCandidate(q, useJp) {
     return {
         kind: 'jma', ctt: q.ctt,
         intensity: (q.maxi && q.maxi !== '0') ? q.maxi : null,
         depth: parseQuakeDepth(q.cod),
         mag: q.mag ?? null,
         is_volcanic: !!q.is_volcanic,
-        loc: (isJa ? q.anm : (q.en_anm || '').replace(/ Prefecture/gi, '').replace(/ Pref\./gi, '')) || q.anm || null,
+        // No Chinese translation table exists for JMA's ~200 region/prefecture
+        // codes (would mirror eng_codes.py) - zh mode uses the native Japanese
+        // kanji name instead of English, since it's the actual place name
+        // (mutually legible to Chinese readers) rather than a guess at one.
+        loc: (useJp ? q.anm : (q.en_anm || '').replace(/ Prefecture/gi, '').replace(/ Pref\./gi, '')) || q.anm || null,
         at: q.at,
         lat: null, lon: null,
-        url: jmaDetailUrl(q.ctt, isJa),
+        url: jmaDetailUrl(q.ctt, useJp),
     };
 }
 function normalizeWsCandidate(ws) {
@@ -2719,7 +2789,7 @@ function normalizeWsCandidate(ws) {
         depth: ws.depth ?? null,
         mag: ws.magnitude ?? null,
         is_volcanic: !!ws.is_volcanic,
-        loc: (currentLanguage === 'ja' ? ws.loc_jp : ws.loc_en) || null,
+        loc: (currentLanguage !== 'en' ? ws.loc_jp : ws.loc_en) || null,
         at: ws.quake_time ? new Date(ws.quake_time * 1000).toISOString() : null,
         lat: ws.lat ?? null, lon: ws.lon ?? null,
         url: null,
@@ -2734,20 +2804,19 @@ function pickField(priorityList, key) {
 
 function renderSidebar(quakes) {
     const list = document.getElementById('quake-sidebar-list');
-    const isJa = currentLanguage === 'ja';
     list.innerHTML = '';
 
-    const unknownTip  = isJa ? 'JMAがまだ詳細情報を公表していません。' : 'Detailed info not released (yet) by JMA.';
-    const wqTip       = isJa ? '公式情報。JMAデータより先に情報を受信したWebQuakeが発信した速報です。' : 'Official report originated from WebQuake as info was received before JMA data.';
-    const wqjmaTip    = isJa ? 'JMAの速報とWebQuakeのデータを統合した情報です。JMAの情報が速報のため、欠損フィールドはWebQuakeで補完されています。' : 'JMA report combined with WebQuake data, as JMA report is preliminary.';
+    const unknownTip  = t('Detailed info not released (yet) by JMA.', 'JMAがまだ詳細情報を公表していません。', '氣象廳（JMA）尚未公布詳細資訊。');
+    const wqTip       = t('Official report originated from WebQuake as info was received before JMA data.', '公式情報。JMAデータより先に情報を受信したWebQuakeが発信した速報です。', '官方資訊。因WebQuake先於JMA資料收到消息而發出的速報。');
+    const wqjmaTip    = t('JMA report combined with WebQuake data, as JMA report is preliminary.', 'JMAの速報とWebQuakeのデータを統合した情報です。JMAの情報が速報のため、欠損フィールドはWebQuakeで補完されています。', 'JMA速報與WebQuake資料整合而成的資訊。因JMA資訊為初步速報，缺漏欄位由WebQuake補足。');
     const fieldLabels = {
-        intensity: isJa ? '最大震度' : 'Max intensity',
-        depth:     isJa ? '深さ'     : 'Depth',
-        mag:       isJa ? 'マグニチュード' : 'Magnitude',
-        loc:       isJa ? '震源地'   : 'Location',
+        intensity: t('Max intensity', '最大震度', '最大震度'),
+        depth:     t('Depth', '深さ', '深度'),
+        mag:       t('Magnitude', 'マグニチュード', '規模'),
+        loc:       t('Location', '震源地', '震央位置'),
     };
-    const wqStaticLabel = isJa ? 'WebQuake（速報データ）' : 'WebQuake (live telegram data)';
-    const sourcesTitle  = isJa ? '情報の出典' : 'Data sources';
+    const wqStaticLabel = t('WebQuake (live telegram data)', 'WebQuake（速報データ）', 'WebQuake（即時電文資料）');
+    const sourcesTitle  = t('Data sources', '情報の出典', '資料來源');
 
     const sidebarFilter = effectiveSidebarFilter();
     const renderItems = []; // { ts, el } — sorted newest-first before being appended
@@ -2778,7 +2847,7 @@ function renderSidebar(quakes) {
         // JMA candidates take priority over WS, and among themselves the most recently
         // issued report (highest ctt, a YYYYMMDDHHMMSS string) wins ties for a given field.
         const jmaCandidates = cluster.jmaIdxs
-            .map(idx => normalizeJmaCandidate(quakes[idx], isJa))
+            .map(idx => normalizeJmaCandidate(quakes[idx], currentLanguage !== 'en'))
             .sort((a, b) => String(b.ctt || '').localeCompare(String(a.ctt || '')));
         const wsCandidate = cluster.ws ? normalizeWsCandidate(cluster.ws) : null;
         const priorityList = wsCandidate ? [...jmaCandidates, wsCandidate] : jmaCandidates;
@@ -2807,7 +2876,7 @@ function renderSidebar(quakes) {
         const bg    = intColor(maxi);
         const fg    = intTextColor(maxi);
         const loc   = fLoc.value || '–';
-        const t     = atSource && atSource.at ? formatQuakeTime(atSource.at) : '–';
+        const timeStr = atSource && atSource.at ? formatQuakeTime(atSource.at) : '–';
         const mag   = fMag.value;
         const depth = fDepth.value;
         const depthLabel = fieldLabels.depth;
@@ -2816,7 +2885,7 @@ function renderSidebar(quakes) {
             ? `&ensp;${depthLabel}: <b>${depth} km</b>`
             : mag != null ? `&ensp;<span title="${unknownTip}">${depthLabel}: <b>?</b></span>` : '';
         const magStr = isVolcanic
-            ? `<b>${isJa ? '火山噴火' : 'Volcanic Eruption'}</b>`
+            ? `<b>${t('Volcanic Eruption', '火山噴火', '火山噴發')}</b>`
             : mag != null
                 ? `<b>M ${mag}</b>${depthPart}`
                 : `<span title="${unknownTip}">–</span>`;
@@ -2849,12 +2918,16 @@ function renderSidebar(quakes) {
         let jmaBtnHtml = '';
         let jmaPopoverHtml = '';
         if (jmaSources.length === 1) {
-            jmaBtnHtml = `<a class="quake-jma-btn" href="${jmaSources[0].url}" target="_blank" rel="noopener noreferrer" title="Open on JMA website">JMA ↗</a>`;
+            jmaBtnHtml = `<a class="quake-jma-btn" href="${jmaSources[0].url}" target="_blank" rel="noopener noreferrer" title="${t('Open on JMA website', 'JMAのウェブサイトで開く', '在JMA網站開啟')}">JMA ↗</a>`;
         } else if (jmaSources.length > 1 || (hasJma && hasWs)) {
             const popoverItems = sources.map(s => {
                 if (s.kind === 'jma') {
                     const timeLabel = formatCttTime(s.ctt);
-                    const reportLabel = isJa ? `JMA速報${timeLabel ? ` (${timeLabel})` : ''} ↗` : `JMA report${timeLabel ? ` (${timeLabel})` : ''} ↗`;
+                    const reportLabel = t(
+                        `JMA report${timeLabel ? ` (${timeLabel})` : ''} ↗`,
+                        `JMA速報${timeLabel ? ` (${timeLabel})` : ''} ↗`,
+                        `JMA報告${timeLabel ? ` (${timeLabel})` : ''} ↗`
+                    );
                     return `<a class="quake-jma-popover-item" href="${s.url}" target="_blank" rel="noopener noreferrer">${s.fields.join(', ')} — ${reportLabel}</a>`;
                 }
                 return `<div class="quake-jma-popover-item quake-jma-popover-static">${s.fields.join(', ')} — ${wqStaticLabel}</div>`;
@@ -2862,25 +2935,27 @@ function renderSidebar(quakes) {
             jmaBtnHtml = `<button type="button" class="quake-jma-btn quake-jma-multi" title="${sourcesTitle}">JMA ▾</button>`;
             jmaPopoverHtml = `<div class="quake-jma-popover hidden"><div class="quake-jma-popover-title">${sourcesTitle}</div>${popoverItems}</div>`;
         }
+
         // Backend-confirmed match (JMA hypocenter code 900/901 + haversine/
         // time match against a CWA report, see _find_matching_tw_report) -
         // a small secondary note rather than a competing card/marker (that's
         // suppressed on the map side, see the 'earthquake' displayData
         // handler), since CWA's report is the primary one for this event.
         const matchedTw = cluster.ws && cluster.ws.matched_tw;
+        const matchedTwTip = t('Also felt in Taiwan', 'この地震は台湾でも観測されました', '此地震在台灣也有觀測到');
         const matchedTwHtml = matchedTw
             ? (matchedTw.web
-                ? `<a class="quake-jma-btn" href="${matchedTw.web}" target="_blank" rel="noopener noreferrer" title="${isJa ? 'この地震は台湾でも観測されました' : 'Also felt in Taiwan'}">CWA ↗</a>`
-                : `<span class="quake-source quake-source-cwa" title="${isJa ? 'この地震は台湾でも観測されました' : 'Also felt in Taiwan'}">CWA</span>`)
+                ? `<a class="quake-jma-btn" href="${matchedTw.web}" target="_blank" rel="noopener noreferrer" title="${matchedTwTip}">CWA ↗</a>`
+                : `<span class="quake-source quake-source-cwa" title="${matchedTwTip}">CWA</span>`)
             : '';
 
         const mapPin = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="13" viewBox="0 0 11 13" fill="currentColor"><path d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.38 4.5 8.5 4.5 8.5s4.5-5.12 4.5-8.5C10 2.02 7.98 0 5.5 0zm0 6.1a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/></svg>';
         const mapBtnHtml = mapTs
-            ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? 'Hide on map' : 'Show on map'}">${mapActive ? '✕' : mapPin}</button>`
+            ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? t('Hide on map', '地図から隠す', '從地圖隱藏') : t('Show on map', '地図に表示', '在地圖顯示')}">${mapActive ? '✕' : mapPin}</button>`
             : '';
         const replayIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="11" viewBox="0 0 10 11" fill="currentColor"><path d="M0 0l10 5.5L0 11z"/></svg>';
         const replayBtnHtml = replayMarker
-            ? `<button class="quake-replay-btn" title="${isJa ? 'リプレイで確認' : 'View in replay'}">${replayIcon}</button>`
+            ? `<button class="quake-replay-btn" title="${t('View in replay', 'リプレイで確認', '在重播中檢視')}">${replayIcon}</button>`
             : '';
 
         a.innerHTML =
@@ -2888,7 +2963,7 @@ function renderSidebar(quakes) {
             `<div class="quake-info">` +
             `<div class="quake-location" title="${loc}">${loc}</div>` +
             `<div class="quake-time">` +
-            `<span>${t}</span>` +
+            `<span>${timeStr}</span>` +
             `<div class="quake-time-btns">` + mapBtnHtml + replayBtnHtml + `</div>` +
             `</div>` +
             `<div class="quake-mag">` +
@@ -2935,7 +3010,7 @@ function renderSidebar(quakes) {
 
     if (sidebarFilter !== 'jp') {
         lastTwHistoryData.forEach(q => {
-            renderItems.push({ ts: q.ts, el: buildTwHistoryEntry(q, isJa) });
+            renderItems.push({ ts: q.ts, el: buildTwHistoryEntry(q) });
         });
     }
 
@@ -3008,18 +3083,18 @@ function handleTwMapBtn(q) {
     }, 180000);
 }
 
-function buildTwHistoryEntry(q, isJa) {
+function buildTwHistoryEntry(q) {
     const maxi = q.max_int || '0';
     const badge = maxi === '0' ? '?' : maxi;
     const bg = intColor(maxi);
     const fg = intTextColor(maxi);
-    const loc = q.location || '–';
-    const t = q.ts ? formatQuakeTime(new Date(q.ts * 1000).toISOString()) : '–';
-    const depthLabel = isJa ? '深さ' : 'Depth';
+    const loc = (currentLanguage === 'zh' && q.location_zh) ? q.location_zh : (q.location || '–');
+    const timeStr = q.ts ? formatQuakeTime(new Date(q.ts * 1000).toISOString()) : '–';
+    const depthLabel = t('Depth', '深さ', '深度');
     const depthPart = q.depth != null ? `&ensp;${depthLabel}: <b>${q.depth} km</b>` : '';
     const magStr = q.magnitude != null ? `<b>M ${q.magnitude}</b>${depthPart}` : '<span>–</span>';
     const badgeHtml = badge === '?'
-        ? `<div class="quake-int-badge" style="background:${bg};color:${fg}" title="${isJa ? 'CWAが詳細情報を公表していません。' : 'Detailed info not released (yet) by CWA.'}">${badge}</div>`
+        ? `<div class="quake-int-badge" style="background:${bg};color:${fg}" title="${t('Detailed info not released (yet) by CWA.', 'CWAが詳細情報を公表していません。', 'CWA尚未公布詳細資訊。')}">${badge}</div>`
         : `<div class="quake-int-badge" style="background:${bg};color:${fg}">${badge}</div>`;
 
     const a = document.createElement('a');
@@ -3027,14 +3102,14 @@ function buildTwHistoryEntry(q, isJa) {
     a.className = 'quake-entry quake-entry-tw' + (isActive ? ' quake-entry-active' : '');
 
     const cwaBtnHtml = q.web
-        ? `<a class="quake-jma-btn" href="${q.web}" target="_blank" rel="noopener noreferrer" title="Open on CWA website">CWA ↗</a>`
+        ? `<a class="quake-jma-btn" href="${q.web}" target="_blank" rel="noopener noreferrer" title="${t('Open on CWA website', 'CWAのウェブサイトで開く', '在CWA網站開啟')}">CWA ↗</a>`
         : `<span class="quake-source quake-source-cwa">CWA</span>`;
 
     const mapPin = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="13" viewBox="0 0 11 13" fill="currentColor"><path d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.38 4.5 8.5 4.5 8.5s4.5-5.12 4.5-8.5C10 2.02 7.98 0 5.5 0zm0 6.1a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/></svg>';
     const hasCoords = q.lat != null && q.lon != null;
     const mapActive = hasCoords && twSidebarActiveKey === q.earthquake_no;
     const mapBtnHtml = hasCoords
-        ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? (isJa ? '地図から隠す' : 'Hide on map') : (isJa ? '地図に表示' : 'Show on map')}">${mapActive ? '✕' : mapPin}</button>`
+        ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? t('Hide on map', '地図から隠す', '從地圖隱藏') : t('Show on map', '地図に表示', '在地圖顯示')}">${mapActive ? '✕' : mapPin}</button>`
         : '';
 
     a.innerHTML =
@@ -3042,7 +3117,7 @@ function buildTwHistoryEntry(q, isJa) {
         `<div class="quake-info">` +
         `<div class="quake-location" title="${loc}">${loc}</div>` +
         `<div class="quake-time">` +
-        `<span>${t}</span>` +
+        `<span>${timeStr}</span>` +
         `<div class="quake-time-btns">` + mapBtnHtml + `</div>` +
         `</div>` +
         `<div class="quake-mag">` +
@@ -3785,7 +3860,7 @@ function updateTimelineUI() {
         liveBtn.classList.add('tl-replaying');
     } else {
         slider.value = now;
-        label.textContent = currentLanguage === 'ja' ? 'ライブ' : 'Live';
+        label.textContent = t('Live', 'ライブ', '即時');
         setTimelinePlayPauseIcon(replayLoading ? 'loading' : 'play');
         liveBtn.classList.remove('tl-replaying');
     }

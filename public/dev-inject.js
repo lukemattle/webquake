@@ -139,6 +139,7 @@ window.testTwQuake = function() {
         depth: 15,
         magnitude: 5.8,
         location: 'Hualien County',
+        location_zh: '花蓮縣',
         stations: [
             {code:'tw-hualien1', lat:23.98, lon:121.60, int:'6-'},
             {code:'tw-hualien2', lat:23.75, lon:121.55, int:'5+'},
@@ -166,13 +167,13 @@ window.testTwHistory = function() {
         type: 'tw_history',
         quakes: [
             {earthquake_no: 115999, lat: 23.7, lon: 121.6, depth: 15, magnitude: 5.8,
-             location: '15.0 km ENE of Hualien County', ts: now - 300, max_int: '6-',
+             location: '15.0 km ENE of Hualien County', location_zh: '花蓮縣政府東北東方 15.0 公里', ts: now - 300, max_int: '6-',
              web: 'https://scweb.cwa.gov.tw/zh-tw/earthquake/details/2026999'},
             {earthquake_no: 115990, lat: 22.9, lon: 121.2, depth: 30, magnitude: 4.2,
-             location: '32.1 km SE of Taitung County', ts: now - 7200, max_int: '3',
+             location: '32.1 km SE of Taitung County', location_zh: '臺東縣政府東南方 32.1 公里', ts: now - 7200, max_int: '3',
              web: 'https://scweb.cwa.gov.tw/zh-tw/earthquake/details/2026990'},
             {earthquake_no: 115980, lat: 24.1, lon: 121.7, depth: 60, magnitude: 3.5,
-             location: '5.2 km N of Yilan County', ts: now - 86400, max_int: null,
+             location: '5.2 km N of Yilan County', location_zh: '宜蘭縣政府北方 5.2 公里', ts: now - 86400, max_int: null,
              web: null},
         ],
     });

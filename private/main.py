@@ -1254,11 +1254,16 @@ with db.Database() as cursor:
             magnitude REAL,
             location TEXT,
             timestamp INTEGER,
-            web TEXT
+            web TEXT,
+            location_zh TEXT
         )
     ''')
     try:
         cursor.execute('ALTER TABLE tw_quake_epicenters ADD COLUMN web TEXT')
+    except Exception:
+        pass  # Column already exists
+    try:
+        cursor.execute('ALTER TABLE tw_quake_epicenters ADD COLUMN location_zh TEXT')
     except Exception:
         pass  # Column already exists
     cursor.execute('''
@@ -2205,11 +2210,11 @@ def _load_cwa_seen_earthquake_nos():
     except Exception as e:
         dmdws.logger.warning('Failed to load seen CWA earthquake numbers: %s', e)
 
-def _store_tw_quake(earthquake_no, lat, lon, depth, magnitude, location, stations, ts, web):
+def _store_tw_quake(earthquake_no, lat, lon, depth, magnitude, location, stations, ts, web, location_zh):
     with db.Database() as cursor:
         cursor.execute(
-            'INSERT OR IGNORE INTO tw_quake_epicenters (earthquake_no, lat, lon, depth, magnitude, location, timestamp, web) VALUES (?,?,?,?,?,?,?,?)',
-            (earthquake_no, lat, lon, depth, magnitude, location, ts, web)
+            'INSERT OR IGNORE INTO tw_quake_epicenters (earthquake_no, lat, lon, depth, magnitude, location, timestamp, web, location_zh) VALUES (?,?,?,?,?,?,?,?,?)',
+            (earthquake_no, lat, lon, depth, magnitude, location, ts, web, location_zh)
         )
         if stations:
             cursor.executemany(
@@ -2234,13 +2239,13 @@ def _load_tw_history():
     try:
         with db.Database() as cursor:
             cursor.execute(
-                'SELECT earthquake_no, lat, lon, depth, magnitude, location, timestamp, web '
+                'SELECT earthquake_no, lat, lon, depth, magnitude, location, timestamp, web, location_zh '
                 'FROM tw_quake_epicenters ORDER BY timestamp DESC LIMIT ?',
                 (_TW_HISTORY_CAP,)
             )
             rows = cursor.fetchall()
             history = []
-            for eq_no, lat, lon, depth, magnitude, location, ts, web in rows:
+            for eq_no, lat, lon, depth, magnitude, location, ts, web, location_zh in rows:
                 cursor.execute('SELECT intensity FROM tw_quake_stations WHERE earthquake_no = ?', (eq_no,))
                 max_int = None
                 for (val,) in cursor.fetchall():
@@ -2248,7 +2253,7 @@ def _load_tw_history():
                         max_int = val
                 history.append({
                     'earthquake_no': eq_no, 'lat': lat, 'lon': lon, 'depth': depth,
-                    'magnitude': magnitude, 'location': location, 'ts': ts,
+                    'magnitude': magnitude, 'location': location, 'location_zh': location_zh, 'ts': ts,
                     'max_int': max_int, 'web': web,
                 })
         recent_tw_history = history
@@ -2312,7 +2317,7 @@ def poll_cwa_reports():
                             except (TypeError, ValueError):
                                 continue
                     web = rec.get('Web')
-                    _store_tw_quake(eq_no, lat, lon, depth, magnitude, location, stations, ts, web)
+                    _store_tw_quake(eq_no, lat, lon, depth, magnitude, location, stations, ts, web, location_zh)
                     recent_tw_quake_data = {
                         'type': 'tw_earthquake',
                         'earthquake_no': eq_no,
@@ -2333,7 +2338,7 @@ def poll_cwa_reports():
                             max_int = s['int']
                     recent_tw_history.insert(0, {
                         'earthquake_no': eq_no, 'lat': lat, 'lon': lon, 'depth': depth,
-                        'magnitude': magnitude, 'location': location, 'ts': ts,
+                        'magnitude': magnitude, 'location': location, 'location_zh': location_zh, 'ts': ts,
                         'max_int': max_int, 'web': web,
                     })
                     del recent_tw_history[_TW_HISTORY_CAP:]
@@ -3517,6 +3522,18 @@ _INDEX_LOCALIZED = {
         'content="https://webqua.ke/">': 'content="https://webqua.ke/ja/">',
         "window.__WEBQUAKE_LANG = 'en';": "window.__WEBQUAKE_LANG = 'ja';",
     },
+    'zh': {
+        '<html lang="en">': '<html lang="zh">',
+        '<title>WebQuake - Japan EEW & Tsunami Map</title>':
+            '<title>WebQuake - 緊急地震速報與海嘯警報地圖</title>',
+        'content="Live Japan earthquake early warning (EEW) and tsunami warning map. Real-time JMA alerts, seismic intensity readings, and a 48-hour replay of past earthquakes.">':
+            'content="即時日本緊急地震速報（EEW）與海嘯警報地圖，同時提供台灣地震測站資訊。提供氣象廳（JMA）速報、觀測點震度資訊，以及過去48小時的重播功能。">',
+        'content="WebQuake - Japan Earthquake Early Warning & Tsunami Map">':
+            'content="WebQuake - 緊急地震速報與海嘯警報地圖">',
+        '<link rel="canonical" href="https://webqua.ke/">': '<link rel="canonical" href="https://webqua.ke/zh/">',
+        'content="https://webqua.ke/">': 'content="https://webqua.ke/zh/">',
+        "window.__WEBQUAKE_LANG = 'en';": "window.__WEBQUAKE_LANG = 'zh';",
+    },
 }
 
 def _render_index(lang='en', public_dir=None, dev=False):
@@ -3556,6 +3573,12 @@ def index():
 @app.route('/ja/')
 def index_ja():
     response = app.response_class(_render_index('ja'), mimetype='text/html')
+    response.headers['Cache-Control'] = 'no-cache, max-age=0'
+    return response
+
+@app.route('/zh/')
+def index_zh():
+    response = app.response_class(_render_index('zh'), mimetype='text/html')
     response.headers['Cache-Control'] = 'no-cache, max-age=0'
     return response
 
