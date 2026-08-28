@@ -125,6 +125,54 @@ window.testTwStations = function() {
     console.log('[test] Taiwan/ExpTech stations injected');
 };
 
+// CWA-style post-event report — mirrors the shape poll_cwa_reports() will
+// eventually broadcast (earthquake_no, lat/lon, depth, magnitude, location).
+window.testTwQuake = function() {
+    displayData({
+        type: 'tw_earthquake',
+        earthquake_no: 115999,
+        lat: 23.7,
+        lon: 121.6,
+        depth: 15,
+        magnitude: 5.8,
+        location: 'Hualien County',
+    });
+    console.log('[test] Taiwan quake injected');
+};
+
+window.testTwQuakeClear = function() {
+    displayData({type: 'tw_past_quake_clear'});
+    console.log('[test] Taiwan quake cleared');
+};
+
+// Live Taiwan EEW — field shape (author/serial/eq.{time,loc,lat,lon,mag,depth,max})
+// confirmed from ExpTech's own live production trem.js, not guessed. eq.time is
+// epoch milliseconds (unlike JMA's unix-seconds convention).
+window.testTwEew = function(cwa = true) {
+    displayData({
+        type: 'tw_eew',
+        id: 'DEVTW' + Date.now(),
+        author: cwa ? 'cwa' : 'trem',
+        serial: 2,
+        eq: {
+            time: Date.now() - 8000,
+            loc: 'Hualien County',
+            lat: 23.98,
+            lon: 121.60,
+            mag: 6.2,
+            depth: 12,
+            max: 7, // 6-
+        },
+    });
+    console.log('[test] Taiwan EEW injected —', cwa ? 'CWA' : 'non-CWA author');
+};
+
+window.testTwEewClear = function() {
+    clearTwEewDisplay();
+    console.log('[test] Taiwan EEW cleared');
+};
+
+
 // lpgm: 長周期地震動階級 1–4, or 0/null for the (usual) "no long-period motion" case.
 window.testEew = function(warning = false, lpgm = 0) {
     displayData(_eewBase({
@@ -290,4 +338,4 @@ console.log(
     '%c WebQuake dev injector ready ',
     'background:#1a1a1a;color:#8f8;padding:4px 8px;border-radius:3px'
 );
-console.log('testAll() | testNied() | testTwStations() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
+console.log('testAll() | testNied() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');

@@ -451,8 +451,9 @@ map.on('zoomend moveend', updateTaiwanLabelClip);
 
 // ── Layer state ───────────────────────────────────────────────────────
 let regionLayer   = null;
-const epicenterMarks = new Map(); // key → Leaflet marker; EEW keys are String(origin_time), past quake uses '__past__'
+const epicenterMarks = new Map(); // key → Leaflet marker; EEW keys are String(origin_time), JMA past quake uses '__past__', Taiwan/CWA past quake uses '__tw_past__'
 const activeEews     = new Map(); // key → EEW data object
+const activeTwEews   = new Map(); // key → tw_eew data object; epicenter/wave keys are 'tw:'+key, kept separate from JMA's activeEews
 const seenEewOrigins    = new Set(); // origin_times we've already sounded for
 // canonical quake key (event_id/ctt, or a time-matched stand-in) → { ts, fp } of the info
 // last announced with new_info.mp3, shared across the WQ (live telegram) and JMA history
@@ -1078,6 +1079,13 @@ function _setTwStationData(stations) {
         .filter(st => st.int !== '0' && st.int != null)
         .sort((a, b) => intRank(a.int) - intRank(b.int));
     scheduleRedrawTwStations();
+    if (selectedStationCode && stationPopup.style.display !== 'none') {
+        const st = stations.find(s => s.code === selectedStationCode);
+        if (st) {
+            const pt = map.latLngToContainerPoint([st.lat, st.lon]);
+            showStationPopup(st, pt.x, pt.y, 'exptech');
+        }
+    }
 }
 
 function updateTwStations(stations) {
@@ -1339,8 +1347,20 @@ function _formatAge(ms) {
     return r > 0 ? `${m}m ${r}s ago` : `${m}m ago`;
 }
 
-function showStationPopup(st, px, py, isSnet) {
+function showStationPopup(st, px, py, source) {
     document.getElementById('sp-name').textContent = st.code || st.name || '–';
+    const badgeEl = document.getElementById('sp-source-badge');
+    if (source === 'exptech') {
+        badgeEl.textContent = 'TREM-Net';
+        badgeEl.className = 'quake-source quake-source-exptech';
+        badgeEl.title = currentLanguage === 'ja'
+            ? 'ExpTech TREM-Net（台湾）のリアルタイム観測データ。中央気象署（CWA）の公式データではありません。'
+            : 'ExpTech TREM-Net (Taiwan) real-time station data — a community sensor network, not an official CWA source.';
+        badgeEl.style.display = '';
+    } else {
+        badgeEl.style.display = 'none';
+    }
+    const isSnet = source === 'snet';
     const intLabel = (currentLanguage === 'ja' ? '震度 ' : 'Int. ') + (st.raw != null ? st.raw : (st.int ?? '–'));
     document.getElementById('sp-int-label').textContent = intLabel;
     document.getElementById('sp-int-bar').style.background = intColor(st.int);
@@ -1380,8 +1400,33 @@ function showStationPopup(st, px, py, isSnet) {
     stationPopup.style.top  = py + 'px';
 }
 
+// Taiwan/CWA earthquake report popup — opened by clicking the '__tw_past__'
+// epicenter marker (its own click listener, see placeMarker), dismissed by
+// any other click. Kept separate from the station click-popup above since
+// it shows a single active report rather than hit-testing a station array.
+let activeTwQuakeData = null;
+const twQuakePopup = document.getElementById('tw-quake-popup');
+
+function dismissTwQuakePopup() {
+    twQuakePopup.style.display = 'none';
+}
+
+function showTwQuakePopup(px, py) {
+    if (!activeTwQuakeData) return;
+    const d = activeTwQuakeData;
+    const isJa = currentLanguage === 'ja';
+    document.getElementById('twp-loc').textContent = d.location || '–';
+    document.getElementById('twp-mag').innerHTML = 'M <b>' + (d.magnitude ?? '–') + '</b>';
+    document.getElementById('twp-depth').innerHTML = (isJa ? '深さ' : 'Depth') + ' <b>' + (d.depth != null ? d.depth + ' km' : '–') + '</b>';
+    twQuakePopup.style.display = 'block';
+    twQuakePopup.style.left = px + 'px';
+    twQuakePopup.style.top  = py + 'px';
+}
+
 map.getContainer().addEventListener('click', function(e) {
     if (e.target.closest('#station-popup')) return;
+    if (e.target.closest('#tw-quake-popup')) return;
+    dismissTwQuakePopup();
 
     const rect = map.getContainer().getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -1399,7 +1444,25 @@ map.getContainer().addEventListener('click', function(e) {
         });
         if (snetClosest) {
             selectedStationCode = snetClosest.st.code;
-            showStationPopup(snetClosest.st, snetClosest.pt.x, snetClosest.pt.y, true);
+                        showStationPopup(snetClosest.st, snetClosest.pt.x, snetClosest.pt.y, 'snet');
+            L.DomEvent.stopPropagation(e);
+            return;
+        }
+    }
+
+    // Taiwan/ExpTech stations — geographically distinct from Japan's, so hit-testing
+    // order relative to NIED doesn't matter, but checked here to sit alongside S-net.
+    if (lastTwStations.length && !liveStationsHidden) {
+        const twHitR = Math.max(6, Math.min(20, Math.round(z * 2 - 2))) / 2 + 4;
+        let twClosest = null, twBest = Infinity;
+        lastTwStations.forEach(st => {
+            const pt = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
+            const d  = Math.hypot(pt.x - mx, pt.y - my);
+            if (d < twHitR && d < twBest) { twBest = d; twClosest = { st, pt }; }
+        });
+        if (twClosest) {
+            selectedStationCode = twClosest.st.code;
+            showStationPopup(twClosest.st, twClosest.pt.x, twClosest.pt.y, 'exptech');
             L.DomEvent.stopPropagation(e);
             return;
         }
@@ -1417,7 +1480,7 @@ map.getContainer().addEventListener('click', function(e) {
 
     if (closest) {
         selectedStationCode = closest.st.code;
-        showStationPopup(closest.st, closest.pt.x, closest.pt.y, false);
+        showStationPopup(closest.st, closest.pt.x, closest.pt.y, 'nied');
         L.DomEvent.stopPropagation(e);
     } else {
         dismissStationPopup();
@@ -1671,6 +1734,14 @@ function placeMarker(key, lat, lon, isPlum, isEew) {
         const el = document.createElement('div');
         el.style.cssText = 'position:absolute;top:0;left:0;';
         el.innerHTML = isEew ? EPICENTRE_HTML_FLASH : EPICENTRE_HTML;
+        if (key === '__tw_past__') {
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', (e) => {
+                const pt = map.latLngToContainerPoint([lat, lon]);
+                showTwQuakePopup(pt.x, pt.y);
+                e.stopPropagation();
+            });
+        }
         epicenterLayer.appendChild(el);
         const mark = { _isDomMark: true, el, lat, lon };
         positionEpicenterMark(mark);
@@ -1971,10 +2042,69 @@ function buildEewCard(data) {
     return div;
 }
 
+// Taiwan/ExpTech intensity index (0-9) → the same '0'..'7'/'5-'/'5+' string
+// labels JMA's shindo scale uses, per ExpTech's own Intensity[] table
+// (confirmed from their live production trem.js) — 0-4 plain, 5=5-,6=5+,7=6-,8=6+,9=7.
+const TW_MAX_INT_LABELS = ['0','1','2','3','4','5-','5+','6-','6+','7'];
+function twMaxIntLabel(n) {
+    return (n != null && TW_MAX_INT_LABELS[n] != null) ? TW_MAX_INT_LABELS[n] : null;
+}
+
+// Taiwan is UTC+8 (not JST's +9) — eq.time from ExpTech is epoch milliseconds,
+// unlike JMA's unix-seconds convention, so this can't reuse formatJst() as-is.
+function formatCwaTime(epochMs) {
+    const d = new Date(epochMs + 8 * 3600 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}/${pad(d.getUTCMonth()+1)}/${pad(d.getUTCDate())} ` +
+           `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} CST`;
+}
+
+function buildTwEewCard(data) {
+    const eq = data.eq || {};
+    const isCwa = data.author === 'cwa';
+    const maxLabel = twMaxIntLabel(eq.max);
+    const div = document.createElement('div');
+    div.className = 'eew-card';
+    div.innerHTML =
+        `<div class="eew-type">Taiwan EEW  #${data.serial ?? '–'}` +
+            (isCwa ? ` <span class="quake-source quake-source-cwa" style="font-size:0.85em">CWA</span>` : '') +
+        `</div>` +
+        `<div class="eew-int-box" style="background:${maxLabel ? intColor(maxLabel) : '#555'};color:${maxLabel ? intTextColor(maxLabel) : '#aaa'}">${maxLabel ?? '?'}</div>` +
+        `<div class="eew-location">${eq.loc || '–'}</div>` +
+        `<div class="eew-detail">M ${eq.mag ?? '–'}  Depth ${eq.depth ?? '–'} km</div>` +
+        `<div class="eew-time">${eq.time != null ? formatCwaTime(eq.time) : '–'}</div>`;
+    return div;
+}
+
+// Mirrors placeAllEpicenters() for Taiwan EEWs — kept as its own function
+// (rather than merged into activeEews' iteration) since activeTwEews' data
+// shape (eq.lat/eq.lon nested, not flat) differs from JMA's.
+function placeAllTwEewEpicenters() {
+    for (const [key, data] of activeTwEews) {
+        const eq = data.eq || {};
+        if (eq.lat != null && eq.lon != null) placeMarker('tw:' + key, eq.lat, eq.lon, false, true);
+    }
+}
+
+function clearTwEewDisplay(key) {
+    if (key !== undefined) {
+        activeTwEews.delete(key);
+        removeEpicenterMark('tw:' + key);
+        clearWaveForKey('tw:' + key);
+    } else {
+        for (const k of activeTwEews.keys()) {
+            removeEpicenterMark('tw:' + k);
+            clearWaveForKey('tw:' + k);
+        }
+        activeTwEews.clear();
+    }
+    renderEewPanels();
+}
+
 function renderEewPanels() {
     const container = document.getElementById('eew-cards');
     container.innerHTML = '';
-    if (activeEews.size === 0) {
+    if (activeEews.size === 0 && activeTwEews.size === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
         positionObsPanel();
@@ -1989,6 +2119,15 @@ function renderEewPanels() {
             container.appendChild(sep);
         }
         container.appendChild(buildEewCard(data));
+        first = false;
+    }
+    for (const data of activeTwEews.values()) {
+        if (!first) {
+            const sep = document.createElement('div');
+            sep.className = 'eew-card-sep';
+            container.appendChild(sep);
+        }
+        container.appendChild(buildTwEewCard(data));
         first = false;
     }
     setLanguage(currentLanguage);
@@ -2707,6 +2846,43 @@ function displayData(data) {
         activeTsunamiObs = null;
         clearOffshoreObsRegions();
         renderTsunamiCard();
+    } else if (data.type === 'tw_earthquake') {
+        // Taiwan/CWA post-event report. Kept deliberately minimal for now —
+        // the epicenter marker (own dedicated key, so a concurrent JMA
+        // past-quake marker '__past__' is never overwritten) opens a small
+        // popup with the CWA badge on click. Region coloring and a proper
+        // sidebar card (matching JMA's history list) are separate follow-up
+        // pieces, not yet wired in here.
+        activeTwQuakeData = data;
+        if (data.lat != null && data.lon != null) {
+            placeMarker('__tw_past__', data.lat, data.lon);
+            if (!hasRyukyuActivity()) {
+                map.flyTo([data.lat, data.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
+            }
+        }
+    } else if (data.type === 'tw_past_quake_clear') {
+        activeTwQuakeData = null;
+        dismissTwQuakePopup();
+        removeEpicenterMark('__tw_past__');
+    } else if (data.type === 'tw_eew') {
+        // Live Taiwan EEW, sourced from ExpTech's eq/eew feed (CWA has no public
+        // live push — see plan notes). Schema fields (author/serial/eq.{time,loc,
+        // lat,lon,mag,depth,max}) confirmed from ExpTech's own live production
+        // code, not guessed — see the eq.lat/eq.lon caveat in buildTwEewCard's
+        // caller: if a payload omits them, the marker/wave just don't render.
+        const key = String(data.id ?? data.serial ?? Date.now());
+        activeTwEews.set(key, data);
+        renderEewPanels();
+        placeAllTwEewEpicenters();
+        const eq = data.eq || {};
+        if (eq.lat != null && eq.lon != null) {
+            startWaveAnimation('tw:' + key, eq.lat, eq.lon, parseFloat(eq.depth) || 10, eq.time != null ? eq.time / 1000 : Date.now() / 1000);
+            if (!hasRyukyuActivity()) {
+                map.flyTo([eq.lat, eq.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
+            }
+        }
+    } else if (data.type === 'tw_eew_clear') {
+        clearTwEewDisplay(data.key);
     }
 }
 

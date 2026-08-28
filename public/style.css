@@ -115,9 +115,13 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     font-size: 0.6em; font-weight: 700; letter-spacing: 0.06em; opacity: 0.8;
     padding: 1px 3px;
 }
-.quake-source-ws    { color: #4a9eff; }
-.quake-source-jma   { color: #666; }
-.quake-source-wqjma { color: #a78bfa; }
+.quake-source-ws      { color: #4a9eff; }
+.quake-source-jma     { color: #666; }
+.quake-source-wqjma   { color: #a78bfa; }
+/* Two distinct badges, not one "Taiwan" tag — ExpTech's live station feed is
+   its own community sensor network (TREM-Net), not an official CWA source. */
+.quake-source-exptech { color: #2dd4bf; }
+.quake-source-cwa     { color: #f59e0b; }
 .quake-map-btn {
     flex-shrink: 0;
     background: rgba(255,255,255,0.07); border: none; color: #777;
@@ -266,25 +270,28 @@ html[lang="en"] .ja { display: none; }
 html[lang="ja"] .en { display: none; }
 
 /* ── Station click popup ── */
-#station-popup {
+#station-popup, #tw-quake-popup {
     position: absolute; z-index: 900; pointer-events: all;
     background: rgba(30,30,30,0.92); border: 1px solid rgba(255,255,255,0.15);
     border-radius: 4px; padding: 6px 10px 6px 8px;
     color: #fff; font-size: 0.82em; white-space: nowrap;
     display: none; transform: translate(-50%, calc(-100% - 10px));
 }
-#station-popup .sp-name { font-weight: 600; margin-bottom: 3px; }
-#station-popup .sp-int { display: flex; align-items: center; gap: 6px; }
+#station-popup .sp-name-row, #tw-quake-popup .sp-name-row { display: flex; align-items: baseline; gap: 5px; margin-bottom: 3px; }
+#station-popup .sp-name, #tw-quake-popup .sp-name { font-weight: 600; }
+#station-popup .sp-int, #tw-quake-popup .sp-int { display: flex; align-items: center; gap: 6px; }
 #station-popup .sp-int-bar {
     display: inline-block; width: 4px; height: 14px; border-radius: 1px;
 }
-#station-popup .sp-close {
+#station-popup .sp-close, #tw-quake-popup .sp-close {
     position: absolute; top: 3px; right: 5px;
     background: none; border: none; color: #aaa; cursor: pointer;
     font-size: 0.9em; line-height: 1; padding: 0;
 }
-#station-popup .sp-close:hover { color: #fff; }
+#station-popup .sp-close:hover, #tw-quake-popup .sp-close:hover { color: #fff; }
 #station-popup .sp-pga { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+#tw-quake-popup .twp-row { margin-top: 2px; color: #ccc; }
+#tw-quake-popup .twp-row b { color: #fff; }
 #obs-pga-label { font-size: 0.7em; color: #aaa; margin-top: 4px; }
 #obs-pga-box {
     border-radius: 4px; padding: 3px 8px;

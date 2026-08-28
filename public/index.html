@@ -73,7 +73,9 @@
 <!-- Station click popup -->
 <div id="station-popup">
     <button class="sp-close" onclick="dismissStationPopup()" aria-label="Close">✕</button>
-    <div class="sp-name" id="sp-name"></div>
+    <div class="sp-name-row">
+        <span class="sp-name" id="sp-name"></span>
+    </div>
     <div class="sp-int">
         <span class="sp-int-bar" id="sp-int-bar"></span>
         <span id="sp-int-label"></span>
@@ -87,6 +89,18 @@
         <span id="sp-borehole-label" style="font-size:0.88em;text-decoration:underline dotted;text-underline-offset:2px;cursor:help"></span>
     </div>
     <div id="sp-age-row" style="display:none;margin-top:4px;font-size:0.78em;opacity:0.7"></div>
+        <div class="quake-source" id="sp-source-badge" style="display:none;margin-top:4px;text-align:right"></div>
+</div>
+
+<!-- Taiwan/CWA earthquake report popup, opened by clicking the '__tw_past__' epicenter marker -->
+<div id="tw-quake-popup">
+    <button class="sp-close" onclick="dismissTwQuakePopup()" aria-label="Close">✕</button>
+    <div class="sp-name-row">
+        <span class="sp-name" id="twp-loc"></span>
+        <span class="quake-source quake-source-cwa">CWA</span>
+    </div>
+    <div class="twp-row" id="twp-mag"></div>
+    <div class="twp-row" id="twp-depth"></div>
 </div>
 
 <!-- EEW floating panel -->
