@@ -89,7 +89,7 @@
         <span id="sp-borehole-label" style="font-size:0.88em;text-decoration:underline dotted;text-underline-offset:2px;cursor:help"></span>
     </div>
     <div id="sp-age-row" style="display:none;margin-top:4px;font-size:0.78em;opacity:0.7"></div>
-        <div class="quake-source" id="sp-source-badge" style="display:none;margin-top:4px;text-align:right"></div>
+    <div class="quake-source" id="sp-source-badge" style="display:none;margin-top:4px;text-align:right"></div>
 </div>
 
 <!-- Taiwan/CWA earthquake report popup, opened by clicking the '__tw_past__' epicenter marker -->
@@ -149,6 +149,15 @@
 <!-- Settings popup -->
 <div id="settings-popup">
     <button id="settings-close" onclick="toggleSettings()" aria-label="Close">✕</button>
+    <div class="settings-title"><span class="en">Data Source</span><span class="ja">データソース</span></div>
+    <div class="settings-row">
+        <span class="settings-label"><span class="en">Show</span><span class="ja">表示</span></span>
+        <span class="lang-seg">
+            <button type="button" class="lang-seg-btn" id="ds-filter-both" onclick="setDataSourceFilter('both')">Both</button>
+            <button type="button" class="lang-seg-btn" id="ds-filter-jp" onclick="setDataSourceFilter('jp')">JP</button>
+            <button type="button" class="lang-seg-btn" id="ds-filter-tw" onclick="setDataSourceFilter('tw')">TW</button>
+        </span>
+    </div>
     <div class="settings-title"><span class="en">Stations</span><span class="ja">観測点</span></div>
     <label class="settings-row">
         <span class="settings-label">S-net</span>
