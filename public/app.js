@@ -1756,7 +1756,7 @@ map.getContainer().addEventListener('click', function(e) {
         }
     }
 
-    if (!lastStations.length || liveStationsHidden) { dismissStationPopup(); return; }
+    if (!showJapan() || !lastStations.length || liveStationsHidden) { dismissStationPopup(); return; }
 
     const hitR = Math.max(6, Math.min(20, Math.round(z * 2 - 2))) / 2 + 4;
     let closest = null, bestDist = Infinity;
@@ -2429,7 +2429,6 @@ function renderEewPanels() {
     container.innerHTML = '';
     const jpEews   = showJapan()  ? activeEews   : new Map();
     const twEews   = showTaiwan() ? activeTwEews : new Map();
-    const twQuake  = (showTaiwan() && activeTwQuakeData) ? [activeTwQuakeData] : [];
     if (jpEews.size === 0 && twEews.size === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
@@ -2863,6 +2862,17 @@ function renderSidebar(quakes) {
             jmaBtnHtml = `<button type="button" class="quake-jma-btn quake-jma-multi" title="${sourcesTitle}">JMA ▾</button>`;
             jmaPopoverHtml = `<div class="quake-jma-popover hidden"><div class="quake-jma-popover-title">${sourcesTitle}</div>${popoverItems}</div>`;
         }
+        // Backend-confirmed match (JMA hypocenter code 900/901 + haversine/
+        // time match against a CWA report, see _find_matching_tw_report) -
+        // a small secondary note rather than a competing card/marker (that's
+        // suppressed on the map side, see the 'earthquake' displayData
+        // handler), since CWA's report is the primary one for this event.
+        const matchedTw = cluster.ws && cluster.ws.matched_tw;
+        const matchedTwHtml = matchedTw
+            ? (matchedTw.web
+                ? `<a class="quake-jma-btn" href="${matchedTw.web}" target="_blank" rel="noopener noreferrer" title="${isJa ? 'この地震は台湾でも観測されました' : 'Also felt in Taiwan'}">CWA ↗</a>`
+                : `<span class="quake-source quake-source-cwa" title="${isJa ? 'この地震は台湾でも観測されました' : 'Also felt in Taiwan'}">CWA</span>`)
+            : '';
 
         const mapPin = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="13" viewBox="0 0 11 13" fill="currentColor"><path d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.38 4.5 8.5 4.5 8.5s4.5-5.12 4.5-8.5C10 2.02 7.98 0 5.5 0zm0 6.1a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/></svg>';
         const mapBtnHtml = mapTs
@@ -2883,7 +2893,7 @@ function renderSidebar(quakes) {
             `</div>` +
             `<div class="quake-mag">` +
             `<span>${magStr}</span>` +
-            `<div class="quake-source-row">` + sourceLabel + jmaBtnHtml + `</div>` +
+            `<div class="quake-source-row">` + sourceLabel + jmaBtnHtml + matchedTwHtml + `</div>` +
             `</div>` +
             jmaPopoverHtml +
             `</div>`;
@@ -3234,7 +3244,15 @@ function displayData(data) {
         } else {
             resetRegionColors();
         }
-        if (data.lat != null && data.lon != null) {
+        // A backend-confirmed match against a CWA report (hypocenter code
+        // 900/901, see _find_matching_tw_report) means this JMA report and an
+        // active Taiwan report describe the same physical event - CWA's own
+        // marker/flyTo is the primary one for it, so this side doesn't place
+        // a second competing marker. The sidebar entry still gets a "also
+        // reported by CWA" note (see renderSidebar/matched_tw).
+        if (data.matched_tw) {
+            removeEpicenterMark('__past__');
+        } else if (data.lat != null && data.lon != null) {
             placeMarker('__past__', data.lat, data.lon);
             if (isRyukyuCoord(data.lat, data.lon)) {
                 ryukyuEpicentre = true;
@@ -3302,14 +3320,13 @@ function displayData(data) {
         clearOffshoreObsRegions();
         renderTsunamiCard();
     } else if (data.type === 'tw_earthquake') {
-        // Taiwan/CWA post-event report. The epicenter marker (own dedicated
-        // key, so a concurrent JMA past-quake marker '__past__' is never
-        // overwritten) opens a small popup with the CWA badge on click.
-        // Region coloring buckets per-station readings by point-in-polygon
-        // (see computeTwRegionIntensitiesFromStations) since CWA reports
-        // don't carry a JMA-style area_intensities array. Also rendered as
-        // a card in the shared EEW panel (buildTwQuakeCard/renderEewPanels),
-        // alongside the click-triggered map popup.
+        // Taiwan/CWA post-event report. Never rendered in the live #eew-panel
+        // (see renderEewPanels) - CWA reports are always finalized/historical,
+        // never "in progress" the way EEW is, so they don't belong in a
+        // live-status panel. Only the epicenter marker (own dedicated key, so
+        // a concurrent JMA past-quake marker '__past__' is never overwritten)
+        // + click popup, region coloring, and the sidebar history entry
+        // represent it.
         activeTwQuakeData = data;
         if (data.stations && data.stations.length) {
             updateTwRegionColors(computeTwRegionIntensitiesFromStations(data.stations));
