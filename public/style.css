@@ -88,6 +88,11 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     text-decoration: none; color: inherit; cursor: pointer;
 }
 .quake-entry:hover { background: rgba(255,255,255,0.05); }
+/* Taiwan/CWA entries get a teal accent stripe (matching the ExpTech/TREM-Net
+   badge color used elsewhere) so they're distinguishable at a glance in
+   "Both" mode without needing extra width in an already-compact card. Rule
+   order matters here: .quake-entry-active must come after so its amber
+   accent wins when a TW entry is also the active one. */
 .quake-entry-tw { box-shadow: inset 3px 0 0 rgba(45,212,191,0.6); }
 .quake-entry-active { background: rgba(255,200,50,0.08); box-shadow: inset 3px 0 0 #f5a623; }
 .quake-entry:first-child .quake-info { padding-top: 10px; }
@@ -123,7 +128,9 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
 .quake-source-jma     { color: #666; }
 .quake-source-wqjma   { color: #a78bfa; }
 /* Two distinct badges, not one "Taiwan" tag — ExpTech's live station feed is
-   its own community sensor network (TREM-Net), not an official CWA source. */
+   its own community sensor network (TREM-Net), not an official CWA source;
+   CWA's own earthquake reports are official. Mislabeling ExpTech data as CWA
+   would misattribute a community network as a government one. */
 .quake-source-exptech { color: #2dd4bf; }
 .quake-source-cwa     { color: #f59e0b; }
 .quake-map-btn {
@@ -190,7 +197,7 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 }
 #jst-time { color: #ddd; }
 #discord-btn { margin-left: auto; }
-#x-btn { margin-left: 4px; }
+#x-btn, #github-btn { margin-left: 4px; }
 #bottom-title { position: absolute; left: 50%; transform: translateX(-50%); font-size: 0.95em; color: #aaa; pointer-events: none; }
 #bottom-version { color: #666; }
 .bar-btn {
@@ -274,7 +281,7 @@ html[lang="en"] .ja, html[lang="en"] .zh { display: none; }
 html[lang="ja"] .en, html[lang="ja"] .zh { display: none; }
 html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
 
-/* ── Station click popup ── */
+/* ── Station click popup (also shared by the Taiwan epicenter popup) ── */
 #station-popup, #tw-quake-popup {
     position: absolute; z-index: 900; pointer-events: all;
     background: rgba(30,30,30,0.92); border: 1px solid rgba(255,255,255,0.15);

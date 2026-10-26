@@ -1,3 +1,4 @@
+import env_loader  # noqa: F401 - loads .env into os.environ before config is read
 import dmdws, time, os, json, db, threading, requests, io, colorsys, glob, secrets, mimetypes, re, itertools, gzip, math
 import numpy as np
 import brotli
@@ -136,8 +137,9 @@ ADMIN_ENABLED = bool(ADMIN_PASSWORD)
 ADMIN_DIR = os.path.join(BASE_DIR, 'admin')
 
 # --- Taiwan (CWA) config ---
-# CWA opendata requires a personal API key (https://opendata.cwa.gov.tw/user/authkey)
-CWA_API_KEY = os.environ.get("WEBQUAKE_CWA_API_KEY", "PUT_KEY_HERE")
+# CWA opendata requires a personal API key (https://opendata.cwa.gov.tw/user/authkey).
+# poll_cwa_reports() logs a warning and never polls if unset.
+CWA_API_KEY = _optional_env("WEBQUAKE_CWA_API_KEY")
 
 _check_required_env()
 
@@ -684,6 +686,13 @@ def process_data(data): # Extracts the relevant information from the data
         else:
             no_tsunami = False
         lat, lon = _extract_coord(data)
+        is_volcanic = _is_volcanic_origin_report(data)
+        if is_volcanic and event_id:
+            volcanic_origin_event_ids.add(event_id)
+        elif event_id in volcanic_origin_event_ids:
+            # A later report for the same event (e.g. a revision) that no longer carries
+            # the volcanic disclaimer text still describes the same volcanic-origin event.
+            is_volcanic = True
         output_data = { # stores the data in a dictionary
             'type': 'earthquake',
             'event_id': event_id,
@@ -695,6 +704,7 @@ def process_data(data): # Extracts the relevant information from the data
             'max_lpgm': max_lpgm,
             'magnitude': magnitude,
             'depth': depth,
+            'is_volcanic': is_volcanic,
             'prefectures_en': prefectures_en,
             'prefectures_jp': prefectures_jp,
             'regions_en': regions_en,
@@ -2366,6 +2376,51 @@ _eew_clear_timers = {}        # {key: threading.Timer}
 _timers_lock = threading.Lock()
 _jma_history_top = None
 
+def _haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+# JMA hypocenter codes "900" (Around Taiwan) and "901" (East China Sea) mean
+# JMA itself considers the epicenter to be at/around Taiwan, not genuine
+# Japanese territory - unlike the 850-860 Okinawa/Miyako/Ishigaki/Yonaguni
+# offshore codes, which stay pure JMA even though they're geographically
+# close to Taiwan. Only reports with one of these two codes get checked
+# against CWA's own reports at all.
+_TW_MATCH_HYPOCENTER_CODES = {'900', '901'}
+_TW_MATCH_TIME_WINDOW_S = 180
+_TW_MATCH_DIST_KM = 100
+
+def _find_matching_tw_report(output_data):
+    """Best-effort match of a JMA post-event report (VXSE51/52/53, hypocenter
+    code 900/901) against a recently-received CWA report, by time (+-180s of
+    origin) and space (<100km haversine). Directional only - checked from the
+    JMA side against CWA reports already in recent_tw_history, not the other
+    way around, so a CWA report that lands after this JMA telegram won't
+    retroactively be matched. Acceptable per the plan: an unmatched pair just
+    falls back to showing both independently, same as before this existed."""
+    lat, lon = output_data.get('lat'), output_data.get('lon')
+    ts = output_data.get('quake_time')
+    if lat is None or lon is None or ts is None:
+        return None
+    best, best_dt = None, None
+    for q in recent_tw_history:
+        if q.get('lat') is None or q.get('lon') is None or q.get('ts') is None:
+            continue
+        dt = abs(q['ts'] - ts)
+        if dt > _TW_MATCH_TIME_WINDOW_S:
+            continue
+        if _haversine_km(lat, lon, q['lat'], q['lon']) > _TW_MATCH_DIST_KM:
+            continue
+        if best is None or dt < best_dt:
+            best, best_dt = q, dt
+    if best is None:
+        return None
+    return {'earthquake_no': best['earthquake_no'], 'web': best.get('web'), 'location': best.get('location')}
+
 def store_recent_data(output_data, data):
     global recent_earthquake_data, recent_tsunami_data, recent_offshore_obs_data
     global _eew_clear_timers, _past_quake_clear_timer, _tsunami_clear_timer, _offshore_obs_clear_timer
@@ -2431,12 +2486,18 @@ def store_recent_data(output_data, data):
                 t.start()
     elif output_data['type'] == 'earthquake' and 'last_report' not in output_data:
         global recent_past_quake_data
+        hypo_code = data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('code', '')
+        if hypo_code in _TW_MATCH_HYPOCENTER_CODES:
+            match = _find_matching_tw_report(output_data)
+            if match:
+                output_data['matched_tw'] = match  # mutated in place - rides along on the send_data_to_all_sockets call right after this
+                dmdws.logger.info('JMA report matched to CWA earthquake_no=%s (hypocenter code %s)', match['earthquake_no'], hypo_code)
         # If this is a later telegram for the same event (e.g. VXSE52 after VXSE53), preserve
         # any intensity fields the new telegram omits — VXSE52 has no max_int/regions/prefectures.
         if recent_past_quake_data and recent_past_quake_data.get('event_id') == output_data.get('event_id'):
             merged = {**recent_past_quake_data, **output_data}
             for field in ('max_int', 'max_lpgm', 'prefectures_en', 'prefectures_jp',
-                          'regions_en', 'regions_jp', 'area_intensities'):
+                          'regions_en', 'regions_jp', 'area_intensities', 'matched_tw'):
                 if field not in output_data and field in recent_past_quake_data:
                     merged[field] = recent_past_quake_data[field]
             recent_past_quake_data = merged
@@ -3518,8 +3579,8 @@ _INDEX_LOCALIZED = {
             'content="日本の緊急地震速報（EEW）と津波警報のリアルタイムマップ。気象庁(JMA)の速報、観測点の震度情報、過去48時間のリプレイ機能を提供。">',
         'content="WebQuake - Japan Earthquake Early Warning & Tsunami Map">':
             'content="WebQuake - 緊急地震速報・津波警報マップ">',
-        '<link rel="canonical" href="https://webqua.ke/">': '<link rel="canonical" href="https://webqua.ke/ja/">',
-        'content="https://webqua.ke/">': 'content="https://webqua.ke/ja/">',
+        '<link rel="canonical" href="https://URL/">': '<link rel="canonical" href="https://URL/ja/">',
+        'content="https://URL/">': 'content="https://URL/ja/">',
         "window.__WEBQUAKE_LANG = 'en';": "window.__WEBQUAKE_LANG = 'ja';",
     },
     'zh': {
@@ -3530,8 +3591,8 @@ _INDEX_LOCALIZED = {
             'content="即時日本緊急地震速報（EEW）與海嘯警報地圖，同時提供台灣地震測站資訊。提供氣象廳（JMA）速報、觀測點震度資訊，以及過去48小時的重播功能。">',
         'content="WebQuake - Japan Earthquake Early Warning & Tsunami Map">':
             'content="WebQuake - 緊急地震速報與海嘯警報地圖">',
-        '<link rel="canonical" href="https://webqua.ke/">': '<link rel="canonical" href="https://webqua.ke/zh/">',
-        'content="https://webqua.ke/">': 'content="https://webqua.ke/zh/">',
+        '<link rel="canonical" href="https://URL/">': '<link rel="canonical" href="https://URL/zh/">',
+        'content="https://URL/">': 'content="https://URL/zh/">',
         "window.__WEBQUAKE_LANG = 'en';": "window.__WEBQUAKE_LANG = 'zh';",
     },
 }

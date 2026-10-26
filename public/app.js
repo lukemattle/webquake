@@ -474,7 +474,6 @@ function updateJapanLabelClip() {
 }
 updateJapanLabelClip();
 map.on('zoomend moveend', updateJapanLabelClip);
-L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // Second, independent label pane/clip for Taiwan — kept separate from the
 // Japan pane/polygon above so this is purely additive and can't regress the
@@ -572,6 +571,8 @@ function reapplyDataSourceFilter() {
     dismissStationPopup();
     if (!showTaiwan()) dismissTwQuakePopup();
 }
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // ── Layer state ───────────────────────────────────────────────────────
 let regionLayer   = null;
@@ -801,6 +802,12 @@ function resetTwRegionColors() {
     renderTwRegionColors();
 }
 
+// Relative (no leading slash) so this resolves against the *page's* own
+// directory (/ for prod, /dev/ for the dev frontend) rather than always
+// hitting prod's root — an absolute '/japan-regions.geojson' would silently
+// fetch prod's copy even from the dev site, since app.js's own fetch() calls
+// aren't touched by the server-side path-rewrite that index.html's <link>/
+// <script> tags get (see _render_index's dev handling in main.py).
 fetch('japan-regions.geojson')
     .then(r => r.json())
     .then(gj => {
@@ -1729,7 +1736,6 @@ function dismissTwQuakePopup() {
 function showTwQuakePopup(px, py) {
     if (!activeTwQuakeData) return;
     const d = activeTwQuakeData;
-    const isJa = currentLanguage === 'ja';
     document.getElementById('twp-loc').textContent = (currentLanguage === 'zh' && d.location_zh) ? d.location_zh : (d.location || '–');
     document.getElementById('twp-mag').innerHTML = 'M <b>' + (d.magnitude ?? '–') + '</b>';
     document.getElementById('twp-depth').innerHTML = t('Depth', '深さ', '深度') + ' <b>' + (d.depth != null ? d.depth + ' km' : '–') + '</b>';
@@ -1759,7 +1765,7 @@ map.getContainer().addEventListener('click', function(e) {
         });
         if (snetClosest) {
             selectedStationCode = snetClosest.st.code;
-                        showStationPopup(snetClosest.st, snetClosest.pt.x, snetClosest.pt.y, 'snet');
+            showStationPopup(snetClosest.st, snetClosest.pt.x, snetClosest.pt.y, 'snet');
             L.DomEvent.stopPropagation(e);
             return;
         }
@@ -2071,7 +2077,7 @@ function placeMarker(key, lat, lon, isPlum, isEew) {
         positionEpicenterMark(mark);
         epicenterMarks.set(key, mark);
     }
-        applyEpicenterVisibility(key);
+    applyEpicenterVisibility(key);
 }
 
 // Country-scoped marker keys: '__tw_past__' (Taiwan/CWA post-event) and any

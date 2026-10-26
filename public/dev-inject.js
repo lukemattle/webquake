@@ -262,6 +262,35 @@ window.testPastQuake = function() {
     console.log('[test] Past quake injected');
 };
 
+// JMA report matched to a CWA report server-side (hypocenter code 900/901 +
+// haversine/time match against recent_tw_history, see _find_matching_tw_report
+// in main.py). Frontend should: suppress the '__past__' epicenter marker
+// entirely, and show a small "CWA ↗" note in this quake's sidebar entry
+// instead of a JMA map pin/flyTo.
+window.testTwMatch = function() {
+    const quakeTime = _nowJst() - 90;
+    displayData({
+        type: 'earthquake',
+        event_id: 'TWMATCH' + Date.now(),
+        quake_time: quakeTime,
+        report_time: _nowJst(),
+        max_int: '3',
+        magnitude: 5.8,
+        depth: 13.1,
+        lat: 22.9,
+        lon: 121.3,
+        epi_location_en: ['Around Taiwan'],
+        epi_location_jp: ['台湾付近'],
+        matched_tw: {
+            earthquake_no: 115057,
+            web: 'https://scweb.cwa.gov.tw/zh-tw/earthquake/details/2026057',
+            location: '48.0 km ESE of Taitung County',
+        },
+        jst_time: _jstNow(),
+    });
+    console.log('[test] JMA quake matched to a CWA report injected — should show no epicenter marker, sidebar entry should have a "CWA ↗" note');
+};
+
 // VTSE41-style: forecast only, numeric heights
 window.testTsunami = function() {
     displayData({
@@ -373,4 +402,4 @@ console.log(
     '%c WebQuake dev injector ready ',
     'background:#1a1a1a;color:#8f8;padding:4px 8px;border-radius:3px'
 );
-console.log('testAll() | testNied() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
+console.log('testAll() | testNied() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
