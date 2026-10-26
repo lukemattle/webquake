@@ -994,7 +994,6 @@ function updateMapKey() {
     el.title = t('Map key', '凡例', '圖例');
 }
 
-
 // ── NIED station dots (canvas overlay) ───────────────────────────────
 let lastStations = [];
 // Pre-split/sorted views of lastStations, recomputed only when the data
@@ -2217,7 +2216,6 @@ function kindLabelJa(code) {
     if (t === 'advisory') return '注意報';
     return '予報';
 }
-
 function kindLabelZh(code) {
     const t = kindTier(code);
     if (t === 'major')    return '大海嘯';
@@ -3143,6 +3141,7 @@ function buildTwHistoryEntry(q) {
     return a;
 }
 
+
 // ── Audio state ───────────────────────────────────────────────────────
 let jmaHistoryReceived = false; // suppresses a chime for the first (cached) jma_history snapshot on connect
 
@@ -3889,3 +3888,4 @@ function onTimelinePlayPause() {
     if (!replayActive) { enterReplay(); return; }
     if (replayPlaying) pauseReplay(); else playReplay();
 }
+

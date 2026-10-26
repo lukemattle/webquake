@@ -1867,11 +1867,12 @@ def poll_nied_jma():
             if img is None:
                 if delta > 0:
                     print(f'[NIED] jma_s fetch failed for ts={ts} (delta={delta})')
+                time.sleep(0.2)
                 continue
             _nied_jma_state = (ts, date, img)
             _nied_latest_ts = ts_int
             break
-        time.sleep(0.3)
+        time.sleep(0.5)
 
 def poll_nied_pga():
     last_pga_ts = None
