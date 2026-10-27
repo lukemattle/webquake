@@ -1858,20 +1858,28 @@ def _nied_decode_and_send(img, img_pga, img_borehole=None):
 def poll_nied_jma():
     global _nied_jma_state, _nied_latest_ts
     while True:
-        for delta in range(4):
+        # NIED publishes each frame ~2-4s after its timestamp, so the newest
+        # one or two seconds are normally 404. Only log when every attempt in a
+        # cycle fails (a genuine outage), not on each expected miss.
+        got = False
+        tried_ts = None
+        for delta in range(6):
             date, ts = _get_jst_parts(delta)
             ts_int = int(ts)
             if ts_int <= _nied_latest_ts:
-                break  # already have this second or newer; don't look further back
+                got = True  # already have this second or newer; nothing to do
+                break
+            tried_ts = ts
             img = _fetch_gif(KMONI_REALTIME.format(date=date, ts=ts))
             if img is None:
-                if delta > 0:
-                    print(f'[NIED] jma_s fetch failed for ts={ts} (delta={delta})')
-                time.sleep(0.2)
+                time.sleep(0.1)
                 continue
             _nied_jma_state = (ts, date, img)
             _nied_latest_ts = ts_int
+            got = True
             break
+        if not got:
+            print(f'[NIED] jma_s fetch failed for all recent timestamps (oldest tried ts={tried_ts})')
         time.sleep(0.5)
 
 def poll_nied_pga():
