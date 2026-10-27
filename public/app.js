@@ -1232,9 +1232,15 @@ function getRegionDisplayState(code) {
 function renderRegionColors() {
     _visibleRegionSources = 0;
     if (regionLayer) regionLayer.eachLayer(layer => {
-        const {source, intensity} = getRegionDisplayState(layer.feature.properties.code);
+        const code = String(layer.feature.properties.code);
+        const {source, intensity} = getRegionDisplayState(code);
+        // Fill and outline have independent priorities: retain the EEW fill,
+        // while supported live shaking supplies the dashed outline and colour.
+        const liveOutline = liveRegionColouring && !liveStationsHidden && (source === 'live' || source === 'eew')
+            ? liveNiedRegionIntensities.get(code) ?? null : null;
         _visibleRegionSources |= source === 'live' ? 1 : source === 'eew' ? 2 : source === 'report' ? 4 : 0;
-        const key = `${source}|${intensity}`;
+        if (liveOutline != null) _visibleRegionSources |= 1;
+        const key = `${source}|${intensity}|${liveOutline}`;
         // A station raw value can change several times per second. Repaint a
         // polygon only when its displayed class or information source changes.
         if (layer._regionDisplayKey === key) return;
@@ -1242,10 +1248,10 @@ function renderRegionColors() {
         layer.setStyle({
             fillColor: source ? intColor(intensity) : '#1c1c1c',
             fillOpacity: source === 'live' ? 0.30 : source ? 0.78 : 0.60,
-            color: source === 'live' ? intColor(intensity) : source ? '#111' : '#333',
-            weight: source === 'live' ? 1.2 : source ? 0.4 : 0.5,
+            color: liveOutline != null ? intColor(liveOutline) : source ? '#111' : '#333',
+            weight: liveOutline != null ? 1.2 : source ? 0.4 : 0.5,
             opacity: 1,
-            dashArray: source === 'live' ? '4 3' : null
+            dashArray: liveOutline != null ? '4 3' : null
         });
     });
     updateMapKey();
