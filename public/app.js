@@ -339,6 +339,32 @@ function intColor(v) { return INT_COLORS[v] || '#555'; }
 function intRank(v)  { return INT_RANK[v]  ?? -1; }
 function intTextColor(v) { return INT_TEXT_DARK.has(v) ? '#111' : '#fff'; }
 
+// Representative continuous intensities for the existing discrete palette.
+// Keep this separate from intColor: official reports and other station feeds
+// still use discrete colours. Values below zero retain the faint zero colour.
+const NIED_COLOR_STOPS = [
+    [0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4'],
+    [4.75, '5-'], [5.25, '5+'], [5.75, '6-'], [6.25, '6+'], [6.75, '7']
+].map(([raw, intensity]) => ({
+    raw,
+    rgb: intColor(intensity).slice(1).match(/../g).map(channel => parseInt(channel, 16))
+}));
+
+function niedIntensityColor(raw, intensity) {
+    // Older replay records and manual injections may only have a class value.
+    if (!Number.isFinite(raw)) return intColor(intensity);
+    let lower = NIED_COLOR_STOPS[0];
+    for (const upper of NIED_COLOR_STOPS.slice(1)) {
+        if (raw <= upper.raw) {
+            const fraction = Math.max(0, (raw - lower.raw) / (upper.raw - lower.raw));
+            const rgb = lower.rgb.map((channel, i) => Math.round(channel + fraction * (upper.rgb[i] - channel)));
+            return `rgb(${rgb.join(',')})`;
+        }
+        lower = upper;
+    }
+    return `rgb(${lower.rgb.join(',')})`;
+}
+
 // ── LPGM (long-period ground motion) helpers ──────────────────────────
 // JMA's 長周期地震動階級 runs 1–4. Class 0 means "no appreciable long-period
 // motion", which is what the vast majority of telegrams carry, so it is treated
@@ -1000,7 +1026,7 @@ let lastStations = [];
 // changes (in updateStations) rather than on every redraw — redraws also
 // fire on every map move frame, where re-sorting would be wasted work.
 let _zeroStations = [];
-let _labeledStations = [];
+let _activeStations = [];
 
 // Mirrors of the true live station state, kept up to date even while replay
 // is active (when live messages are diverted into replayLiveBuffer instead of
@@ -1052,9 +1078,9 @@ function redrawStations() {
     const base = Math.max(6, Math.min(20, Math.round(z * 2 - 2)));
     const zeroDiam = Math.max(4, base - 3);
 
-    // draw zero/null dots first (background layer), then labeled dots sorted
+    // Draw zero/null dots first (background layer), then active dots sorted
     // ascending by intensity. Both groups are precomputed in updateStations.
-    for (const [group, isZero] of [[_zeroStations, true], [_labeledStations, false]]) {
+    for (const [group, isZero] of [[_zeroStations, true], [_activeStations, false]]) {
         group.forEach(st => {
             const diam   = isZero ? zeroDiam : base;
             const pt     = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
@@ -1063,10 +1089,9 @@ function redrawStations() {
             if (pt.x < -diam || pt.y < -diam || pt.x > sz.x + diam || pt.y > sz.y + diam) return;
             const r      = diam / 2;
             const opacity = isZero ? zeroOpacity(st.raw ?? -3) : 1;
-            const lbl    = isZero ? '' : (st.int || '');
 
             ctx.globalAlpha = opacity;
-            ctx.fillStyle = intColor(st.int);
+            ctx.fillStyle = st._surfaceColor;
             if (boreholeVisible && st.borehole_int != null) {
                 const bRank = intRank(st.borehole_int);
                 const bw = bRank >= 1 ? 1.5 : 0;
@@ -1077,7 +1102,7 @@ function redrawStations() {
                     // Inset stroke so the border doesn't grow the shape
                     ctx.save();
                     ctx.clip();
-                    ctx.strokeStyle = intColor(st.borehole_int);
+                    ctx.strokeStyle = st._boreholeColor;
                     ctx.lineWidth = bw * 2;
                     ctx.stroke();
                     ctx.restore();
@@ -1089,16 +1114,6 @@ function redrawStations() {
                 ctx.strokeStyle = 'rgba(0,0,0,0.3)';
                 ctx.lineWidth = 0.8;
                 ctx.stroke();
-            }
-
-            if (lbl) {
-                ctx.globalAlpha = 1;
-                const fs = lbl.length > 1 ? diam * 0.5 : diam * 0.68;
-                ctx.font = `700 ${fs}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = intTextColor(st.int);
-                ctx.fillText(lbl, pt.x, pt.y);
             }
         });
     }
@@ -1855,13 +1870,18 @@ function _setStationData(stations) {
     lastStations = stations;
     // Cache a LatLng per station: redraws run every frame during a pan, and
     // passing [lat, lon] arrays would allocate a fresh LatLng per dot per frame.
-    for (const st of stations) if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+    for (const st of stations) {
+        if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+        // Calculate colours only when station data changes, not on every pan.
+        st._surfaceColor = niedIntensityColor(st.raw, st.int);
+        st._boreholeColor = niedIntensityColor(st.borehole_raw, st.borehole_int);
+    }
     _zeroStations    = stations.filter(st => st.int === '0' || st.int == null);
-    _labeledStations = stations
+    _activeStations = stations
         .filter(st => st.int !== '0' && st.int != null)
         .sort((a, b) => intRank(a.int) - intRank(b.int));
-    _maxLiveStationRank = _labeledStations.length
-        ? intRank(_labeledStations[_labeledStations.length - 1].int) : -1;
+    _maxLiveStationRank = _activeStations.length
+        ? intRank(_activeStations[_activeStations.length - 1].int) : -1;
     scheduleRedrawStations();
     if (selectedStationCode && stationPopup.style.display !== 'none') {
         const st = stations.find(s => s.code === selectedStationCode);

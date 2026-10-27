@@ -102,6 +102,30 @@ window.testNied = function() {
     console.log('[test] NIED stations injected');
 };
 
+// Continuous palette: matching surface-only and borehole rows, including two
+// different raw values in the same class. Click a dot to check numerical values,
+// toggle Borehole, and pan/zoom to check that no station labels are drawn.
+window.testNiedGradient = function() {
+    const readings = [
+        [-3, '0'], [-1, '0'], [0.5, '0'], [1, '1'], [1.25, '1'],
+        [2, '2'], [2.25, '2'], [3, '3'], [4, '4'], [4.75, '5-'],
+        [5.25, '5+'], [5.75, '6-'], [6.25, '6+'], [6.75, '7'], [7, '7']
+    ];
+    const stations = readings.flatMap(([raw, intensity], i) => {
+        const station = {lon: 137 + i * 0.2, int: intensity, raw};
+        return [
+            {...station, code: `gradient-surface-${i}`, lat: 36.2},
+            {...station, code: `gradient-borehole-${i}`, lat: 36.0,
+                borehole_int: intensity, borehole_raw: raw}
+        ];
+    });
+    displayData({type: 'nied_stations', stations});
+    map.flyToBounds(L.latLngBounds(stations.map(st => [st.lat, st.lon])), {
+        padding: [80, 80], maxZoom: 8, animate: false
+    });
+    console.log('[test] NIED gradient injected: upper row surface, lower row borehole');
+};
+
 const _TW_STATIONS = [
     {code:'tw-taipei',   lat:25.04, lon:121.56, int:'4',  raw:4.0},
     {code:'tw-keelung',  lat:25.13, lon:121.74, int:'3',  raw:3.0},
