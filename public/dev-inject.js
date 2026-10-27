@@ -102,6 +102,227 @@ window.testNied = function() {
     console.log('[test] NIED stations injected');
 };
 
+// Continuous palette: matching surface-only and borehole rows, including two
+// different raw values in the same class. Click a dot to check numerical values,
+// toggle Borehole, and pan/zoom to check that no station labels are drawn.
+window.testNiedGradient = function() {
+    const readings = [
+        [-3, '0'], [-1, '0'], [0.5, '0'], [1, '1'], [1.25, '1'],
+        [2, '2'], [2.25, '2'], [3, '3'], [4, '4'], [4.75, '5-'],
+        [5.25, '5+'], [5.75, '6-'], [6.25, '6+'], [6.75, '7'], [7, '7']
+    ];
+    const stations = readings.flatMap(([raw, intensity], i) => {
+        const station = {lon: 137 + i * 0.2, int: intensity, raw};
+        return [
+            {...station, code: `gradient-surface-${i}`, lat: 36.2},
+            {...station, code: `gradient-borehole-${i}`, lat: 36.0,
+                borehole_int: intensity, borehole_raw: raw}
+        ];
+    });
+    displayData({type: 'nied_stations', stations});
+    map.flyToBounds(L.latLngBounds(stations.map(st => [st.lat, st.lon])), {
+        padding: [80, 80], maxZoom: 8, animate: false
+    });
+    console.log('[test] NIED gradient injected: upper row surface, lower row borehole');
+};
+
+// Six close neighbours: testNiedSpatial(0) rejects the lone 7;
+// testNiedSpatial(2) still rejects it; testNiedSpatial(3) accepts it.
+// testNiedSpatial(3, '2') checks that the current maximum falls immediately.
+window.testNiedSpatial = function(supporters = 0, intensity = '7') {
+    const stations = [{code: 'spatial-target', lat: 35.7, lon: 139.7, int: intensity, raw: null}];
+    for (let i = 0; i < 6; i++) {
+        const angle = i * Math.PI / 3;
+        stations.push({
+            code: `spatial-neighbour-${i}`, lat: 35.7 + Math.sin(angle) * 0.03,
+            lon: 139.7 + Math.cos(angle) * 0.04,
+            int: i < supporters ? '1' : '0', raw: i < supporters ? 1 : -1
+        });
+    }
+    displayData({type: 'nied_stations', stations});
+    console.log(`[test] NIED spatial filter: ${supporters}/6 neighbours shaking, candidate ${intensity}`);
+};
+
+// Deterministic checks use isolated filters, without changing live map state.
+// Run after the Japan regions have loaded for the region-boundary checks.
+window.testNiedSpatialFilter = function() {
+    let checks = 0;
+    const check = (condition, description) => {
+        if (!condition) throw new Error(`[NIED filter] ${description}`);
+        checks++;
+    };
+    const fixture = (count, supporters) => [
+        {code: 'target', lat: 35.7, lon: 139.7, int: '7'},
+        ...Array.from({length: count}, (_, i) => ({
+            code: `near-${i}`, lat: 35.7, lon: 139.701 + i * 0.001,
+            int: i < supporters ? '1' : '0'
+        }))
+    ];
+    const hasTarget = result => result.acceptedStations.some(st => st.code === 'target');
+    const requirements = [null, 1, 1, 2, 2, 3, 3];
+    for (let count = 0; count <= 6; count++) {
+        for (let supporters = 0; supporters <= count; supporters++) {
+            const result = new NiedSpatialFilter().evaluate(fixture(count, supporters));
+            const expected = count > 0 && supporters >= requirements[count];
+            check(hasTarget(result) === expected, `${supporters}/${count} supporters`);
+        }
+    }
+    const seven = fixture(7, 0);
+    seven[7].int = '7';
+    check(!hasTarget(new NiedSpatialFilter().evaluate(seven)), 'only the six nearest stations count');
+    const outside = fixture(1, 1);
+    outside[1].lat += 0.5;
+    check(!hasTarget(new NiedSpatialFilter().evaluate(outside)), 'stations beyond 50 km do not count');
+    const borehole = fixture(6, 0).map(st => ({...st, borehole_int: '7'}));
+    check(!hasTarget(new NiedSpatialFilter().evaluate(borehole)), 'borehole shaking cannot confirm surface shaking');
+
+    const filter = new NiedSpatialFilter();
+    const full = fixture(6, 3);
+    check(hasTarget(filter.evaluate(full)), 'supported high reading is accepted');
+    const cached = filter.neighbours.get('target');
+    const falling = full.map(st => st.code === 'target' ? {...st, int: '2'} : st);
+    const fallen = filter.evaluate(falling);
+    check(hasTarget(fallen), 'a supported falling reading remains accepted');
+    check(filter.neighbours.get('target') === cached, 'reading changes reuse cached neighbours');
+    const missing = full.slice(0, 3);
+    check(!hasTarget(filter.evaluate(missing)), 'missing readings do not lower the required support');
+    const missingIntensity = full.map(st => st.code === 'near-2' ? {...st, int: null} : st);
+    check(!hasTarget(filter.evaluate(missingIntensity)), 'missing intensity provides no support');
+    const quiet = full.map(st => ({...st, int: '0'}));
+    check(filter.evaluate(quiet).acceptedStations.length === 0, 'quiet readings clear accepted shaking');
+    const moved = fixture(1, 1);
+    const relocated = new NiedSpatialFilter();
+    check(hasTarget(relocated.evaluate(moved)), 'initial close pair is supported');
+    moved[1] = {...moved[1], lat: 40};
+    check(!hasTarget(relocated.evaluate(moved)), 'coordinate changes invalidate cached neighbours');
+
+    const diffState = new Map(full.map(st => [st.code, st]));
+    const diffFilter = new NiedSpatialFilter();
+    diffFilter.evaluate([...diffState.values()]);
+    diffState.set('target', {...diffState.get('target'), int: '2'});
+    const diff = diffFilter.evaluate([...diffState.values()]);
+    const snapshot = new NiedSpatialFilter().evaluate(falling);
+    check(JSON.stringify(diff.areaIntensities) === JSON.stringify(snapshot.areaIntensities), 'diffs and equivalent snapshots have identical regional maxima');
+
+    if (!_regionFeatureBounds) throw new Error('Wait for Japan regions to load before running testNiedSpatialFilter()');
+    check(fallen.areaIntensities.some(area => area.code === '350' && area.max_int === '2'), 'regional maximum falls from 7 to 2');
+    const border = [
+        {code: 'west', lat: 35.7, lon: 139.5, int: '7'},
+        {code: 'east', lat: 35.7, lon: 139.7, int: '1'}
+    ];
+    const boundaryResult = new NiedSpatialFilter().evaluate(border);
+    check(boundaryResult.areaIntensities.some(area => area.code === '351' && area.max_int === '7'), 'a neighbour across the region boundary supports the western maximum');
+    check(boundaryResult.areaIntensities.some(area => area.code === '350' && area.max_int === '1'), 'cross-boundary neighbours retain separate regional maxima');
+    console.log(`[test] NIED spatial filter: ${checks} checks passed`);
+    return checks;
+};
+
+const _TW_STATIONS = [
+    {code:'tw-taipei',   lat:25.04, lon:121.56, int:'4',  raw:4.0},
+    {code:'tw-keelung',  lat:25.13, lon:121.74, int:'3',  raw:3.0},
+    {code:'tw-taoyuan',  lat:24.99, lon:121.30, int:'2',  raw:2.0},
+    {code:'tw-hsinchu',  lat:24.80, lon:120.97, int:'1',  raw:1.0},
+    {code:'tw-taichung', lat:24.15, lon:120.68, int:'5-', raw:5.0},
+    {code:'tw-changhua', lat:24.05, lon:120.54, int:'3',  raw:3.2},
+    {code:'tw-chiayi',   lat:23.48, lon:120.45, int:'2',  raw:2.1},
+    {code:'tw-tainan',   lat:22.99, lon:120.21, int:'1',  raw:0.8},
+    {code:'tw-kaohsiung',lat:22.63, lon:120.30, int:'0',  raw:-0.5},
+    {code:'tw-pingtung', lat:22.55, lon:120.55, int:'0',  raw:-1.2},
+    {code:'tw-hualien',  lat:23.98, lon:121.60, int:'6-', raw:6.2},
+    {code:'tw-taitung',  lat:22.76, lon:121.14, int:'4',  raw:4.4},
+    {code:'tw-yilan',    lat:24.76, lon:121.75, int:'2',  raw:2.3},
+    {code:'tw-penghu',   lat:23.57, lon:119.58, int:'0',  raw:-2.0},
+    {code:'tw-lanyu',    lat:22.05, lon:121.55, int:'1',  raw:0.5},
+];
+
+window.testTwStations = function() {
+    displayData({type:'exptech_stations', stations:_TW_STATIONS});
+    console.log('[test] Taiwan/ExpTech stations injected');
+};
+
+// CWA-style post-event report — mirrors the shape poll_cwa_reports() will
+// eventually broadcast (earthquake_no, lat/lon, depth, magnitude, location,
+// per-station stations[]). Station coords are spread across a few counties
+// so computeTwRegionIntensitiesFromStations has something to bucket.
+window.testTwQuake = function() {
+    displayData({
+        type: 'tw_earthquake',
+        earthquake_no: 115999,
+        origin_time: new Date().toISOString(),
+        lat: 23.7,
+        lon: 121.6,
+        depth: 15,
+        magnitude: 5.8,
+        location: 'Hualien County',
+        location_zh: '花蓮縣',
+        stations: [
+            {code:'tw-hualien1', lat:23.98, lon:121.60, int:'6-'},
+            {code:'tw-hualien2', lat:23.75, lon:121.55, int:'5+'},
+            {code:'tw-yilan1',   lat:24.76, lon:121.75, int:'4'},
+            {code:'tw-taitung1', lat:22.76, lon:121.14, int:'4'},
+            {code:'tw-nantou1',  lat:23.90, lon:120.98, int:'3'},
+            {code:'tw-taipei1',  lat:25.04, lon:121.56, int:'2'},
+        ],
+    });
+    console.log('[test] Taiwan quake injected');
+};
+
+window.testTwQuakeClear = function() {
+    displayData({type: 'tw_past_quake_clear'});
+    console.log('[test] Taiwan quake cleared');
+};
+
+// Earthquake History sidebar — Taiwan entries. Mirrors what poll_cwa_reports()
+// broadcasts (earthquake_no/lat/lon/depth/magnitude/location/ts/max_int/web),
+// spread across a few timestamps so they interleave with live JMA history
+// entries when testing the Both/JP/TW sidebar filter buttons.
+window.testTwHistory = function() {
+    const now = Math.floor(Date.now() / 1000);
+    displayData({
+        type: 'tw_history',
+        quakes: [
+            {earthquake_no: 115999, lat: 23.7, lon: 121.6, depth: 15, magnitude: 5.8,
+             location: '15.0 km ENE of Hualien County', location_zh: '花蓮縣政府東北東方 15.0 公里', ts: now - 300, max_int: '6-',
+             web: 'https://scweb.cwa.gov.tw/zh-tw/earthquake/details/2026999'},
+            {earthquake_no: 115990, lat: 22.9, lon: 121.2, depth: 30, magnitude: 4.2,
+             location: '32.1 km SE of Taitung County', location_zh: '臺東縣政府東南方 32.1 公里', ts: now - 7200, max_int: '3',
+             web: 'https://scweb.cwa.gov.tw/zh-tw/earthquake/details/2026990'},
+            {earthquake_no: 115980, lat: 24.1, lon: 121.7, depth: 60, magnitude: 3.5,
+             location: '5.2 km N of Yilan County', location_zh: '宜蘭縣政府北方 5.2 公里', ts: now - 86400, max_int: null,
+             web: null},
+        ],
+    });
+    console.log('[test] Taiwan quake history injected');
+};
+
+// Live Taiwan EEW — field shape (author/serial/eq.{time,loc,lat,lon,mag,depth,max})
+// confirmed from ExpTech's own live production trem.js, not guessed. eq.time is
+// epoch milliseconds (unlike JMA's unix-seconds convention).
+window.testTwEew = function(cwa = true) {
+    displayData({
+        type: 'tw_eew',
+        id: 'DEVTW' + Date.now(),
+        author: cwa ? 'cwa' : 'trem',
+        serial: 2,
+        eq: {
+            time: Date.now() - 8000,
+            loc: 'Hualien County',
+            lat: 23.98,
+            lon: 121.60,
+            mag: 6.2,
+            depth: 12,
+            max: 7, // 6-
+        },
+    });
+    console.log('[test] Taiwan EEW injected —', cwa ? 'CWA' : 'non-CWA author');
+};
+
+window.testTwEewClear = function() {
+    clearTwEewDisplay();
+    console.log('[test] Taiwan EEW cleared');
+};
+
+
 // lpgm: 長周期地震動階級 1–4, or 0/null for the (usual) "no long-period motion" case.
 window.testEew = function(warning = false, lpgm = 0) {
     displayData(_eewBase({
@@ -118,6 +339,114 @@ window.testEew = function(warning = false, lpgm = 0) {
         tsunami_possible: warning,
     }));
     console.log('[test] EEW injected —', warning ? 'Warning' : 'Forecast', lpgm ? `(LPGM class ${lpgm})` : '');
+};
+
+// Reusing the event ID sends a revision. Try testNiedSpatial(3, '3'), then
+// testRegionEew(); testRegionEew(false) restores live colours in that region.
+// Use a second ID for overlap; displayData({type:'eew_clear', key: ID}) clears it.
+window.testRegionEew = function(withRegions = true, eventId = 'DEV-REGIONS-A', intensity = '5-', regionCode = '350') {
+    displayData(_eewBase({
+        event_id: eventId, max_int: intensity, magnitude: 5.5, depth: 20,
+        epi_location_en: ['Tokyo'], epi_location_jp: ['東京都'],
+        lat: 35.7, lon: 139.7,
+        area_intensities: withRegions ? [{code: regionCode, max_int: intensity}] : []
+    }));
+    console.log(`[test] ${eventId}: ${withRegions ? `regional forecast ${intensity}` : 'no regional forecast'}`);
+};
+
+// Two neighbouring regions, one with both a live estimate and an EEW forecast.
+// Try selecting rows, Locate, map clicks, language changes, and colouring off.
+window.testRegionPanel = function() {
+    testNiedSpatial(3, '3');
+    const west = Array.from({length: 7}, (_, i) => ({
+        code: `panel-west-${i}`, lat: 35.7 + i * 0.001, lon: 139.5,
+        int: i === 0 ? '2' : '1', raw: i === 0 ? 2 : 1
+    }));
+    displayData({type: 'nied_stations', stations: [...lastStations, ...west]});
+    testRegionEew();
+    console.log('[test] Regions panel: Tokyo wards live 3 / EEW 5−; eastern Tama live 2 / no forecast');
+};
+
+window.testRegionLabels = function() {
+    testRegionPanel();
+    displayData(_eewBase({
+        event_id: 'DEV-LABELS', max_int: '5-',
+        epi_location_en: ['Label placement test'], epi_location_jp: ['ラベル表示テスト'],
+        area_intensities: [...regionLayersByCode.keys()].map(code => ({code, max_int: code === '350' ? '5-' : '3'}))
+    }));
+    clearRegionSelection();
+    map.stop();
+    map.setView([36, 137], 8, {animate: false});
+    console.log('[test] Regional labels: zoom below 8 to hide; pan/zoom, select a region, and toggle live colouring to check collision filtering');
+};
+
+window.testRegionLabelGeometry = function() {
+    let checks = 0;
+    const check = (condition, description) => {
+        if (!condition) throw new Error(`[Region labels] ${description}`);
+        checks++;
+    };
+    const square = [[[0,0],[20,0],[20,20],[0,20],[0,0]]];
+    const hole = [...square, [[8,8],[12,8],[12,12],[8,12],[8,8]]];
+    check(regionLabelRectFits({left: 2, top: 2, right: 6, bottom: 6}, square), 'interior rectangle fits');
+    check(!regionLabelRectFits({left: -1, top: 2, right: 6, bottom: 6}, square), 'rectangle extending outside is rejected');
+    check(!regionLabelRectFits({left: 6, top: 6, right: 14, bottom: 14}, hole), 'an enclosed hole is rejected even with all corners inside');
+    const concave = [[[0,0],[10,0],[10,10],[6,10],[6,4],[4,4],[4,10],[0,10],[0,0]]];
+    check(!regionLabelRectFits({left: 2, top: 2, right: 8, bottom: 8}, concave), 'concave boundary crossing is rejected');
+    const anchor = regionLabelAnchor(hole);
+    check(anchor && _pointInPolygonCoords(anchor[0], anchor[1], hole), 'interior anchor avoids holes');
+    check(regionLabelPolygonArea(hole) === 384, 'polygon area excludes holes');
+    const box = {left: 0, top: 0, right: 10, bottom: 10};
+    check(!regionLabelRectsOverlap(box, {left: 16, top: 0, right: 26, bottom: 10}), 'six-pixel separation is sufficient');
+    check(regionLabelRectsOverlap(box, {left: 15, top: 0, right: 25, bottom: 10}), 'less than six pixels is rejected');
+    const code = '__label_geometry_test__';
+    try {
+        regionLayersByCode.set(code, {feature: {geometry: {type: 'MultiPolygon', coordinates: [
+            [[[130,30],[130.1,30],[130.1,30.1],[130,30.1],[130,30]]],
+            [[[134,34],[136,34],[136,36],[134,36],[134,34]]]
+        ]}}});
+        const shape = getRegionLabelShape(code);
+        const point = map.unproject(shape.anchor, 0);
+        check(point.lat > 34 && point.lat < 36 && point.lng > 134 && point.lng < 136, 'largest component provides the anchor');
+        check(getRegionLabelShape(code) === shape, 'unchanged geometry reuses the cached anchor');
+    } finally {
+        regionLayersByCode.delete(code);
+        regionLabelShapeCache.delete(code);
+    }
+    console.log(`[test] Region label geometry: ${checks} checks passed`);
+    return checks;
+};
+
+window.testEewRegionAggregation = function() {
+    let checks = 0;
+    const check = (condition, description) => {
+        if (!condition) throw new Error(`[EEW regions] ${description}`);
+        checks++;
+    };
+    const events = new Map([
+        ['A', {area_intensities: [{code: '350', max_int: '3'}, {code: '351', max_int: '2'}]}],
+        ['B', {area_intensities: [{code: '350', max_int: '5-'}]}],
+        ['C', {area_intensities: [{code: '350', max_int: '5-'}]}],
+        ['no-regions', {max_int: '7'}]
+    ]);
+    let regions = aggregateEewRegions(events);
+    check(regions.get('350').max_int === '5-', 'highest overlapping forecast wins');
+    check(JSON.stringify(regions.get('350').eventIds) === '["B","C"]', 'equal highest forecasts retain both event IDs');
+    check(regions.get('351').max_int === '2', 'non-overlapping forecast is preserved');
+    check(!hasRegionalForecast(events.get('no-regions')), 'overall maximum is not a regional forecast');
+    check(hasRegionalForecast({area_intensities: [{code: '350', max_int: '0'}]}), 'a regional forecast of zero is available');
+    events.delete('B');
+    regions = aggregateEewRegions(events);
+    check(regions.get('350').max_int === '5-' && regions.get('350').eventIds[0] === 'C', 'cancelled event is removed from attribution');
+    events.delete('C');
+    check(aggregateEewRegions(events).get('350').max_int === '3', 'remaining lower forecast is restored');
+    events.set('A', {area_intensities: [{code: '350', max_int: '1'}]});
+    regions = aggregateEewRegions(events);
+    check(regions.get('350').max_int === '1' && !regions.has('351'), 'revision replaces previous forecast regions and intensity');
+    events.set('A', {max_int: '7', area_intensities: []});
+    check(aggregateEewRegions(events).size === 0, 'revision without regional forecasts clears previous shading');
+    console.log(`[test] EEW region aggregation: ${checks} checks passed`);
+    return checks;
 };
 
 window.testPlum = function() {
@@ -154,6 +483,35 @@ window.testPastQuake = function() {
         jst_time: _jstNow(),
     });
     console.log('[test] Past quake injected');
+};
+
+// JMA report matched to a CWA report server-side (hypocenter code 900/901 +
+// haversine/time match against recent_tw_history, see _find_matching_tw_report
+// in main.py). Frontend should: suppress the '__past__' epicenter marker
+// entirely, and show a small "CWA ↗" note in this quake's sidebar entry
+// instead of a JMA map pin/flyTo.
+window.testTwMatch = function() {
+    const quakeTime = _nowJst() - 90;
+    displayData({
+        type: 'earthquake',
+        event_id: 'TWMATCH' + Date.now(),
+        quake_time: quakeTime,
+        report_time: _nowJst(),
+        max_int: '3',
+        magnitude: 5.8,
+        depth: 13.1,
+        lat: 22.9,
+        lon: 121.3,
+        epi_location_en: ['Around Taiwan'],
+        epi_location_jp: ['台湾付近'],
+        matched_tw: {
+            earthquake_no: 115057,
+            web: 'https://scweb.cwa.gov.tw/zh-tw/earthquake/details/2026057',
+            location: '48.0 km ESE of Taitung County',
+        },
+        jst_time: _jstNow(),
+    });
+    console.log('[test] JMA quake matched to a CWA report injected — should show no epicenter marker, sidebar entry should have a "CWA ↗" note');
 };
 
 // VTSE41-style: forecast only, numeric heights
@@ -267,4 +625,4 @@ console.log(
     '%c WebQuake dev injector ready ',
     'background:#1a1a1a;color:#8f8;padding:4px 8px;border-radius:3px'
 );
-console.log('testAll() | testNied() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
+console.log('testAll() | testNied() | testNiedGradient() | testNiedSpatial() | testNiedSpatial(3) | testNiedSpatialFilter() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testRegionPanel() | testRegionLabels() | testRegionLabelGeometry() | testRegionEew() | testRegionEew(false) | testEewRegionAggregation() | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');

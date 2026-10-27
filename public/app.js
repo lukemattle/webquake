@@ -1,10 +1,75 @@
 const VERSION = 'v1.0.1';
+const FRONTEND_ASSET_BASE = new URL('.', document.currentScript.src);
+
+// ── Data source filter (Both / Japan only / Taiwan only) ───────────────
+// Purely a display filter: underlying WS data still arrives and is stored
+// as normal regardless of this setting (so switching back doesn't need a
+// refetch/reconnect) — only the rendering functions below check it. See
+// showJapan()/showTaiwan() call sites throughout for what's actually gated.
+const DATA_SOURCE_KEY = 'webquake_data_source';
+let dataSourceFilter = localStorage.getItem(DATA_SOURCE_KEY) || 'both';
+function showJapan()  { return dataSourceFilter !== 'tw'; }
+function showTaiwan() { return dataSourceFilter !== 'jp'; }
+
+function updateDataSourceFilterUI() {
+    const ids = { both: 'ds-filter-both', jp: 'ds-filter-jp', tw: 'ds-filter-tw' };
+    for (const [mode, id] of Object.entries(ids)) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', dataSourceFilter === mode);
+    }
+}
+
+function setDataSourceFilter(mode) {
+    dataSourceFilter = mode;
+    localStorage.setItem(DATA_SOURCE_KEY, mode);
+    updateDataSourceFilterUI();
+    reapplyDataSourceFilter();
+    // Changing the global setting is a fresh decision - drop any standing
+    // sidebar-specific override so the sidebar goes back to following it.
+    sidebarFilterOverride = null;
+    try { localStorage.removeItem(SIDEBAR_FILTER_KEY); } catch(e) {}
+    updateSidebarFilterUI();
+    renderSidebar(lastQuakeData);
+}
+
+// ── Earthquake History sidebar filter (Both / JP / TW) ─────────────────
+// Independent of dataSourceFilter above (which gates the whole map/UI) -
+// this only filters which entries render in the #quake-sidebar list.
+// Defaults to following dataSourceFilter; a click on one of the sidebar's
+// own Both/JP/TW buttons sets an explicit override that sticks until the
+// global Data Source setting is changed again (see setDataSourceFilter).
+const SIDEBAR_FILTER_KEY = 'webquake_sidebar_filter';
+let sidebarFilterOverride = localStorage.getItem(SIDEBAR_FILTER_KEY) || null;
+
+function effectiveSidebarFilter() {
+    return sidebarFilterOverride || dataSourceFilter;
+}
+
+function updateSidebarFilterUI() {
+    const ids = { both: 'sb-filter-both', jp: 'sb-filter-jp', tw: 'sb-filter-tw' };
+    const eff = effectiveSidebarFilter();
+    for (const [mode, id] of Object.entries(ids)) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', eff === mode);
+    }
+}
+
+function setSidebarFilter(mode) {
+    sidebarFilterOverride = mode;
+    try { localStorage.setItem(SIDEBAR_FILTER_KEY, mode); } catch(e) {}
+    updateSidebarFilterUI();
+    renderSidebar(lastQuakeData);
+}
 
 // ── OneSignal push notifications ────────────────────────────────────
 const NOTIF_LANG_KEY = 'webquake_notif_lang';
 
 function getNotificationLanguage() {
-    return localStorage.getItem(NOTIF_LANG_KEY) || currentLanguage;
+    // No zh notification content exists (see main.py's en/ja-only NTFY_TOPIC_*/
+    // OneSignal categories) - a zh UI with no explicit override falls back to en.
+    const stored = localStorage.getItem(NOTIF_LANG_KEY);
+    if (stored) return stored;
+    return currentLanguage === 'zh' ? 'en' : currentLanguage;
 }
 
 function updateNotifLanguageUI(lang) {
@@ -73,42 +138,48 @@ function renderNtfySubscribeLinks() {
     const lang = getNotificationLanguage();
     const langTopics = NTFY_TOPICS[lang] || NTFY_TOPICS.en;
     const topics = [
-        { key: langTopics.alerts, en: 'EEW &amp; Tsunami Alerts', ja: '緊急地震速報・津波警報' },
-        { key: langTopics.forecasts, en: 'Earthquake Forecasts', ja: '地震動予測' },
+        { key: langTopics.alerts, en: 'EEW &amp; Tsunami Alerts', ja: '緊急地震速報・津波警報', zh: '緊急地震速報與海嘯警報' },
+        { key: langTopics.forecasts, en: 'Earthquake Forecasts', ja: '地震動予測', zh: '地震動預測' },
     ];
+    // lang here is always 'en'/'ja' (getNotificationLanguage falls back off
+    // 'zh' - no zh notification content exists), but this surrounding chrome
+    // text is still shown to zh UI users, so it gets its own zh translation.
     let html = `<div class="settings-note">
         <span class="en">Showing topics for notification language: ${lang.toUpperCase()}. Change it above to switch.</span>
         <span class="ja">通知言語: ${lang.toUpperCase()} のトピックを表示中です。上の設定で切り替えられます。</span>
+        <span class="zh">目前顯示通知語言為 ${lang.toUpperCase()} 的主題。可於上方設定切換。</span>
     </div>`;
     if (platform === 'android') {
         // The Android app supports ntfy:// deep links straight to the subscribe screen.
         html += `<a class="ntfy-btn" href="${NTFY_APP_LINKS.android}" target="_blank" rel="noopener">
-            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span>
+            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span><span class="zh">取得ntfy應用程式</span>
         </a>`;
         for (const t of topics) {
             html += `<a class="ntfy-btn" href="ntfy://${NTFY_SERVER}/${t.key}">
-                <span class="en">Subscribe: ${t.en}</span><span class="ja">登録: ${t.ja}</span>
+                <span class="en">Subscribe: ${t.en}</span><span class="ja">登録: ${t.ja}</span><span class="zh">訂閱：${t.zh}</span>
             </a>`;
         }
         html += `<div class="settings-note">
             <span class="en">If the app isn't installed yet, install it first, then tap the subscribe links again. Server: ${NTFY_SERVER}</span>
             <span class="ja">アプリが未インストールの場合は、先にインストールしてから登録リンクを再度タップしてください。サーバー: ${NTFY_SERVER}</span>
+            <span class="zh">若尚未安裝應用程式，請先安裝後再次點擊訂閱連結。伺服器：${NTFY_SERVER}</span>
         </div>`;
     } else if (platform === 'ios') {
         // The ntfy iOS app doesn't support ntfy:// deep links yet (Android-only),
         // so subscribing has to be done manually inside the app.
         html += `<a class="ntfy-btn" href="${NTFY_APP_LINKS.ios}" target="_blank" rel="noopener">
-            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span>
+            <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span><span class="zh">取得ntfy應用程式</span>
         </a>`;
         html += `<div class="settings-note">
             <span class="en">The iOS app can't be deep-linked yet. After installing: open ntfy &rarr; Settings &rarr; Default Server, enter <code>https://${NTFY_SERVER}</code>, then tap "+" and subscribe to each topic below by name.</span>
             <span class="ja">iOS版アプリはまだディープリンクに対応していません。インストール後: ntfyを開く → 設定 → デフォルトサーバー に <code>https://${NTFY_SERVER}</code> を入力し、「+」をタップして以下のトピック名を登録してください。</span>
+            <span class="zh">iOS版應用程式尚不支援深層連結。安裝後：開啟ntfy &rarr; 設定 &rarr; 預設伺服器，輸入 <code>https://${NTFY_SERVER}</code>，然後點擊「+」並依名稱訂閱下方各主題。</span>
         </div>`;
         for (const t of topics) {
             html += `<div class="ntfy-topic-row">
                 <span class="ntfy-topic-name">${t.key}</span>
                 <button type="button" class="ntfy-btn ntfy-copy-btn" data-topic="${t.key}">
-                    <span class="en">Copy</span><span class="ja">コピー</span>
+                    <span class="en">Copy</span><span class="ja">コピー</span><span class="zh">複製</span>
                 </button>
             </div>`;
         }
@@ -116,10 +187,11 @@ function renderNtfySubscribeLinks() {
         html += `<div class="settings-note">
             <span class="en">On desktop, ntfy still relies on browser push and has the same reliability limits as above. You can open these topics in a browser instead:</span>
             <span class="ja">デスクトップでは、ntfyもブラウザのプッシュ通知に依存するため上記と同じ制約があります。代わりにブラウザで以下のトピックを開くこともできます：</span>
+            <span class="zh">在桌面版中，ntfy仍依賴瀏覽器推播通知，因此有與上述相同的可靠性限制。您也可以改用瀏覽器開啟以下主題：</span>
         </div>`;
         for (const t of topics) {
             html += `<a class="ntfy-btn" href="https://${NTFY_SERVER}/${t.key}" target="_blank" rel="noopener">
-                <span class="en">Open: ${t.en}</span><span class="ja">開く: ${t.ja}</span>
+                <span class="en">Open: ${t.en}</span><span class="ja">開く: ${t.ja}</span><span class="zh">開啟：${t.zh}</span>
             </a>`;
         }
     }
@@ -172,9 +244,11 @@ async function toggleNotifications() {
                 await OneSignal.User.PushSubscription.optIn();
                 OneSignal.User.setLanguage(getNotificationLanguage());
             } else {
-                alert(currentLanguage === 'ja'
-                    ? '通知が許可されていません。ブラウザの設定を確認してください。'
-                    : 'Notification permission was not granted. Please check your browser settings.');
+                alert(t(
+                    'Notification permission was not granted. Please check your browser settings.',
+                    '通知が許可されていません。ブラウザの設定を確認してください。',
+                    '尚未取得通知權限，請檢查瀏覽器設定。'
+                ));
             }
         } else {
             await OneSignal.User.PushSubscription.optOut();
@@ -245,6 +319,15 @@ let muteTsunamiAdvisory = false;
 function toggleSettings() {
     document.getElementById('settings-popup').classList.toggle('visible');
 }
+const LIVE_REGION_COLOURING_KEY = 'webquake_live_region_colouring';
+let liveRegionColouring = localStorage.getItem(LIVE_REGION_COLOURING_KEY) !== '0';
+
+function setLiveRegionColouring(enabled) {
+    liveRegionColouring = !!enabled;
+    localStorage.setItem(LIVE_REGION_COLOURING_KEY, liveRegionColouring ? '1' : '0');
+    document.getElementById('tog-live-regions').checked = liveRegionColouring;
+    renderRegionColors();
+}
 document.addEventListener('click', e => {
     const popup = document.getElementById('settings-popup');
     const btn   = document.getElementById('settings-btn');
@@ -265,6 +348,32 @@ const INT_TEXT_DARK = new Set(['0','1','4','5-']);
 function intColor(v) { return INT_COLORS[v] || '#555'; }
 function intRank(v)  { return INT_RANK[v]  ?? -1; }
 function intTextColor(v) { return INT_TEXT_DARK.has(v) ? '#111' : '#fff'; }
+
+// Representative continuous intensities for the existing discrete palette.
+// Keep this separate from intColor: official reports and other station feeds
+// still use discrete colours. Values below zero retain the faint zero colour.
+const NIED_COLOR_STOPS = [
+    [0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4'],
+    [4.75, '5-'], [5.25, '5+'], [5.75, '6-'], [6.25, '6+'], [6.75, '7']
+].map(([raw, intensity]) => ({
+    raw,
+    rgb: intColor(intensity).slice(1).match(/../g).map(channel => parseInt(channel, 16))
+}));
+
+function niedIntensityColor(raw, intensity) {
+    // Older replay records and manual injections may only have a class value.
+    if (!Number.isFinite(raw)) return intColor(intensity);
+    let lower = NIED_COLOR_STOPS[0];
+    for (const upper of NIED_COLOR_STOPS.slice(1)) {
+        if (raw <= upper.raw) {
+            const fraction = Math.max(0, (raw - lower.raw) / (upper.raw - lower.raw));
+            const rgb = lower.rgb.map((channel, i) => Math.round(channel + fraction * (upper.rgb[i] - channel)));
+            return `rgb(${rgb.join(',')})`;
+        }
+        lower = upper;
+    }
+    return `rgb(${lower.rgb.join(',')})`;
+}
 
 // ── LPGM (long-period ground motion) helpers ──────────────────────────
 // JMA's 長周期地震動階級 runs 1–4. Class 0 means "no appreciable long-period
@@ -324,6 +433,14 @@ const RYUKYU_ZOOM    = 7;
 function isRyukyuCoord(lat, lon) {
     return lat >= 24 && lat <= 29.5 && lon >= 122 && lon <= 132;
 }
+const TAIWAN_CENTER  = [23.7, 121.0];
+const TAIWAN_ZOOM    = 7;
+// Taiwan bounding box (main island + Penghu/Green I./Orchid I.). Overlaps
+// isRyukyuCoord's western edge (122°E) slightly, so any Taiwan-vs-Ryukyu
+// auto-zoom logic must check isTaiwanCoord first.
+function isTaiwanCoord(lat, lon) {
+    return lat >= 21.5 && lat <= 25.5 && lon >= 119.5 && lon <= 122.2;
+}
 let ryukyuEpicentre = false;
 let ryukyuStations  = false;
 function hasRyukyuActivity() { return ryukyuEpicentre || ryukyuStations; }
@@ -353,14 +470,15 @@ function _evalNiedWarning() {
 }
 setInterval(_evalNiedWarning, 1000);
 
+const CARTO_API_KEY = 'CARTO_KEY';
 const map = L.map('map', { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, zoomControl: false, preferCanvas: true });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_nolabels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/">OSM</a>',
     subdomains: 'abcd', maxZoom: 19
 }).addTo(map);
 map.createPane('japanLabels');
 map.getPane('japanLabels').style.zIndex = 250;
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
+L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
     subdomains: 'abcd', maxZoom: 19,
     pane: 'japanLabels',
     bounds: [[24, 122], [46, 147]]
@@ -392,12 +510,109 @@ function updateJapanLabelClip() {
 }
 updateJapanLabelClip();
 map.on('zoomend moveend', updateJapanLabelClip);
+
+// Second, independent label pane/clip for Taiwan — kept separate from the
+// Japan pane/polygon above so this is purely additive and can't regress the
+// existing Japan label clipping.
+map.createPane('taiwanLabels');
+map.getPane('taiwanLabels').style.zIndex = 250;
+L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
+    subdomains: 'abcd', maxZoom: 19,
+    pane: 'taiwanLabels',
+    bounds: [[21, 118], [26, 123]]
+}).addTo(map);
+// Polygon tracing Taiwan's main island plus Penghu, Green Island, and Orchid
+// Island, deliberately excluding Kinmen, Wuqiu, and Matsu (governed by Taiwan
+// but sitting a few km off the Fujian coast — a label clip can't distinguish
+// them from mainland-China place names a few km away at higher zoom). The
+// west edge hugs Taiwan's actual (tilted) coastline — further west at low
+// latitudes, further east up north — and only bulges out to sea for Penghu
+// in the narrow latitude band Penghu actually sits in; an earlier version
+// bulged the whole north edge west to 119.3°E to reach Penghu, which also
+// dragged in Kinmen/Wuqiu/Fujian-coast labels at Taipei's latitude.
+// The west/south edge carries a large margin beyond the literal coastline —
+// a city label's text renders offset from its real anchor point (CARTO's
+// label placement, not a simple point marker), so even an 80km buffer still
+// clipped Tainan/Kaohsiung mid-word. There's no risk in being generous here:
+// at Kaohsiung's latitude the nearest mainland China territory is hundreds
+// of km further west (Guangdong), so only the NORTH edge (near Kinmen/Matsu/
+// the Fujian coast, ~24-26°N) actually needs to stay tight.
+const TAIWAN_CLIP_POLY = [
+    [21.0, 118.3],  // SW corner, far out to sea — no nearby landmass to worry about at this latitude
+    [21.6, 121.9],  // SE corner, includes Orchid I. (~121.55°E) and Green I.
+    [23.0, 122.6],  // east coast, offshore of Hualien/Taitung
+    [25.5, 122.6],  // NE corner, north of Keelung
+    [25.5, 120.9],  // north edge, west end near Taoyuan/Hsinchu's longitude — the one boundary that must stay tight, east of Matsu (~119.9°E) and the Fujian coast
+    [24.3, 120.0],  // down the west coast toward Taichung's longitude
+    [23.6, 118.9],  // bulge west for the Penghu Islands (~119.3-119.7°E), with margin
+    [22.0, 118.4],  // wide margin down through Tainan/Kaohsiung/Pingtung's latitude — safe this far south
+];
+function updateTaiwanLabelClip() {
+    const pane = map.getPane('taiwanLabels');
+    const pts = TAIWAN_CLIP_POLY.map(([lat, lon]) => {
+        const p = map.latLngToLayerPoint([lat, lon]);
+        return `${p.x}px ${p.y}px`;
+    });
+    pane.style.clipPath = `polygon(${pts.join(',')})`;
+}
+updateTaiwanLabelClip();
+map.on('zoomend moveend', updateTaiwanLabelClip);
+
+// Applies the current dataSourceFilter across every piece it affects: the two
+// label panes, all four station canvases, epicenter markers, and the EEW/
+// past-quake popups (dismissed if their country just got hidden). Called on
+// every setDataSourceFilter() and once at startup so a persisted non-default
+// choice takes effect immediately without waiting for the next WS message.
+function reapplyDataSourceFilter() {
+    map.getPane('japanLabels').style.display  = showJapan()  ? '' : 'none';
+    map.getPane('taiwanLabels').style.display = showTaiwan() ? '' : 'none';
+    scheduleRedrawStations();
+    scheduleRedrawSnetStations();
+    scheduleRedrawTwStations();
+    scheduleRedrawJmaStations();
+    scheduleRedrawTwPtsStations();
+    applyEpicenterVisibility();
+    renderEewPanels();
+    // Seismic wave circles (P/S-wave animation) self-correct on the next
+    // animateWaves() frame via the same key-prefix check, no call needed here.
+    // regionLayer (JMA forecast-region intensity tint) may not exist yet at
+    // startup — it loads async — hence the null check.
+    if (regionLayer) {
+        if (showJapan() && !map.hasLayer(regionLayer)) map.addLayer(regionLayer);
+        else if (!showJapan() && map.hasLayer(regionLayer)) map.removeLayer(regionLayer);
+    }
+    if (twRegionLayer) {
+        if (showTaiwan() && !map.hasLayer(twRegionLayer)) map.addLayer(twRegionLayer);
+        else if (!showTaiwan() && map.hasLayer(twRegionLayer)) map.removeLayer(twRegionLayer);
+    }
+    // Tsunami is JMA-only (out of scope for Taiwan) — re-drive coastlines/obs
+    // circles/card from current state; drawTsunamiCoastlines/
+    // drawOffshoreObsRegions/renderTsunamiCard each check showJapan()
+    // themselves and clear when hidden, so this one call handles both
+    // directions (hide and reveal) correctly.
+    if (activeTsunamiData) drawTsunamiCoastlines(activeTsunamiData); else clearTsunamiCoastlines();
+    if (activeTsunamiObs) drawOffshoreObsRegions(activeTsunamiObs); else clearOffshoreObsRegions();
+    renderTsunamiCard();
+    // Restore the filtered live summary immediately when Japan is shown again,
+    // without waiting for another station diff.
+    refreshNiedSpatialState();
+    // #station-popup is shared between NIED/S-net and ExpTech stations (see
+    // showStationPopup's 'source' param) with no cheap way to tell which
+    // country a currently-open one belongs to, so any filter change just
+    // dismisses it unconditionally — low-stakes, a click reopens it. The
+    // Taiwan quake popup's target country is unambiguous, so that one only
+    // closes when Taiwan specifically becomes hidden.
+    dismissStationPopup();
+    if (!showTaiwan()) dismissTwQuakePopup();
+}
+
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // ── Layer state ───────────────────────────────────────────────────────
 let regionLayer   = null;
-const epicenterMarks = new Map(); // key → Leaflet marker; EEW keys are String(origin_time), past quake uses '__past__'
+const epicenterMarks = new Map(); // key → Leaflet marker; EEW keys are String(origin_time), JMA past quake uses '__past__', Taiwan/CWA past quake uses '__tw_past__'
 const activeEews     = new Map(); // key → EEW data object
+const activeTwEews   = new Map(); // key → tw_eew data object; epicenter/wave keys are 'tw:'+key, kept separate from JMA's activeEews
 const seenEewOrigins    = new Set(); // origin_times we've already sounded for
 // canonical quake key (event_id/ctt, or a time-matched stand-in) → { ts, fp } of the info
 // last announced with new_info.mp3, shared across the WQ (live telegram) and JMA history
@@ -475,6 +690,7 @@ const tsunamiRegionCentroids = {}; // region code → [lat, lon], from tsunami-r
 
 function drawTsunamiCoastlines(data) {
     if (!tsunamiLayer) return;
+    if (!showJapan()) { clearTsunamiCoastlines(); return; } // tsunami is JMA-only, out of scope for Taiwan
     const codes      = data.region_codes || [];
     const kindCodes  = data.kind_codes || [];
     const colorMap = {};
@@ -499,6 +715,199 @@ function clearTsunamiCoastlines() {
 
 // ── Load regions GeoJSONs ─────────────────────────────────────────────
 let _regionFeatureBounds = null; // [{f, bbox:[minLon,minLat,maxLon,maxLat]}] for point-in-region lookups
+const regionLayersByCode = new Map();
+// Bundle every coded region name so English never depends on a second fetch.
+// Base names follow enums/eng_codes.py; island entries cover the remaining polygons.
+const regionNamesEn = {
+    "100": "Northern Ishikari District",
+    "101": "Central Ishikari District",
+    "102": "Southern Ishikari District",
+    "105": "Northern Watashima District",
+    "106": "Eastern Watashima",
+    "107": "Western Watashima District",
+    "110": "Hiyama District",
+    "115": "Northern Goshi District",
+    "116": "Eastern part of Goshi District",
+    "117": "Western part of Goshi District",
+    "119": "Okushiri Island, Hokkaido",
+    "120": "Northern Sorachi District",
+    "121": "Central Sorachi District",
+    "122": "Southern Sorachi District",
+    "125": "Northern Kamikawa district",
+    "126": "Central part of Kamikawa district",
+    "127": "Southern Kamikawa District",
+    "130": "Northern part of Rumoi District",
+    "131": "Southern Rumoi District",
+    "135": "Northern Soya District",
+    "136": "Southern Soya District",
+    "139": "Rishiri and Rebun Islands, Hokkaido",
+    "140": "Abashiri District",
+    "141": "Kitami District",
+    "142": "Monbetsu District",
+    "145": "Western part of Iburi District",
+    "146": "Middle East of Iburi District",
+    "150": "Western Hidaka District",
+    "151": "Central Hidaka District",
+    "152": "Eastern Hidaka District",
+    "155": "Northern Tokachi District",
+    "156": "Central Tokachi District",
+    "157": "Southern Tokachi District",
+    "160": "Northern Kushiro District",
+    "161": "Central and Southern Kushiro District",
+    "165": "Northern Nemuro District",
+    "166": "Central Nemuro District",
+    "167": "Southern Nemuro District",
+    "200": "Northern Tsugaru, Aomori",
+    "201": "Southern Tsugaru, Aomori",
+    "202": "Kamikita district, Sanpachi, Aomori",
+    "203": "Shimokita District, Aomori Prefecture",
+    "210": "Northern Iwate coast",
+    "211": "Southern Iwate coast",
+    "212": "Northern inland, Iwate",
+    "213": "Southern inland Iwate",
+    "220": "Northern Miyagi",
+    "221": "Southern Miyagi",
+    "222": "Central Miyagi",
+    "230": "Northern Akita coast",
+    "231": "Southern Akita coast",
+    "232": "Northern inland Akita",
+    "233": "Southern inland, Akita Pref.",
+    "240": "Shonai District, Yamagata Prefecture",
+    "241": "Yamagata Prefecture Mogami District",
+    "242": "Murayama District, Yamagata Prefecture",
+    "243": "Okitama District, Yamagata Prefecture",
+    "250": "Nakadori, Fukushima",
+    "251": "Hamadori, Fukushima",
+    "252": "Aizu, Fukushima",
+    "300": "Northern part of Ibaraki",
+    "301": "Southern Ibaraki",
+    "310": "Northern Tochigi",
+    "311": "Southern Tochigi",
+    "320": "Northern Gunma",
+    "321": "Southern Gunma",
+    "330": "Northern Saitama",
+    "331": "Southern Saitama",
+    "332": "Chichibu region, Saitama Prefecture",
+    "340": "Northeastern Chiba Prefecture",
+    "341": "Northwestern Chiba",
+    "342": "Southern part of Chiba Prefecture",
+    "350": "23 wards of Tokyo",
+    "351": "Eastern Tama, Tokyo",
+    "352": "Western Tama, Tokyo",
+    "354": "Kozushima Island, Tokyo",
+    "355": "Izu Oshima Island, Tokyo",
+    "356": "Niijima Island, Tokyo",
+    "357": "Miyakejima Island, Tokyo",
+    "358": "Hachijojima Island, Tokyo",
+    "359": "Ogasawara Islands, Tokyo",
+    "360": "Eastern part of Kanagawa Pref.",
+    "361": "Western part of Kanagawa Pref.",
+    "370": "Joetsu District, Niigata Prefecture",
+    "371": "Chuetsu District",
+    "372": "Lower Niigata Prefecture",
+    "375": "Sado Island, Niigata",
+    "380": "Eastern Toyama",
+    "381": "Western Toyama",
+    "390": "Noto district, Ishikawa prefecture",
+    "391": "Kaga district, Ishikawa prefecture",
+    "400": "Reinan, Fukui",
+    "401": "Reinan, Fukui",
+    "411": "Central and Western Yamanashi",
+    "412": "Eastern Yamanashi, Fuji Five Lakes",
+    "420": "Northern Nagano",
+    "421": "Central Nagano",
+    "422": "Southern Nagano",
+    "430": "Hida region, Gifu prefecture",
+    "431": "Eastern Mino, Gifu Prefecture",
+    "432": "Central and Western Mino, Gifu Prefecture",
+    "440": "Izu Area, Shizuoka Prefecture",
+    "441": "Eastern Shizuoka Prefecture",
+    "442": "Central Shizuoka Prefecture",
+    "443": "Western part of Shizuoka Prefecture",
+    "450": "Eastern Aichi Prefecture",
+    "451": "Western Aichi",
+    "460": "Northern Mie",
+    "461": "Central Mie",
+    "462": "Southern Mie",
+    "500": "Northern part of Shiga Pref.",
+    "501": "Southern part of Shiga Pref.",
+    "510": "Northern part of Kyoto Pref.",
+    "511": "Southern part of Kyoto Pref.",
+    "520": "Northern part of Osaka",
+    "521": "Southern Osaka",
+    "530": "Northern part of Hyogo Pref.",
+    "531": "Southeast Hyogo",
+    "532": "Southwest Hyogo",
+    "535": "Awaji Island, Hyogo",
+    "540": "Nara Pref.",
+    "550": "Northern Wakayama Pref.",
+    "551": "Southern Wakayama",
+    "560": "Eastern Tottori",
+    "562": "Central Tottori",
+    "563": "Western Tottori",
+    "570": "Eastern Shimane",
+    "571": "Western Shimane",
+    "575": "Oki Islands, Shimane",
+    "580": "Northern Okayama",
+    "581": "Southern Okayama",
+    "590": "Northern Hiroshima",
+    "591": "Southeast Hiroshima",
+    "592": "Southwest Hiroshima",
+    "600": "Northern Tokushima",
+    "601": "Southern Tokushima",
+    "610": "Eastern Kagawa",
+    "611": "Western Kagawa",
+    "620": "Toyo, Ehime",
+    "621": "Central Ehime",
+    "622": "Ehime Nanyo",
+    "630": "Eastern Kochi",
+    "631": "Central Kochi",
+    "632": "Western Kochi",
+    "700": "Northern part of Yamaguchi Pref.",
+    "702": "Western part of Yamaguchi Pref.",
+    "703": "Eastern Yamaguchi",
+    "704": "Central part of Yamaguchi Pref.",
+    "710": "Fukuoka, Fukuoka prefecture",
+    "711": "Kitakyushu area, Fukuoka prefecture",
+    "712": "Chikuho District, Fukuoka Prefecture",
+    "713": "Chikugo District, Fukuoka Prefecture",
+    "720": "Northern part of Saga Pref.",
+    "721": "Southern Saga",
+    "730": "Northern part of Nagasaki Prefecture",
+    "731": "Southwestern Nagasaki",
+    "732": "Shimabara Peninsula, Nagasaki",
+    "735": "Tsushima Islands, Nagasaki",
+    "736": "Iki Island, Nagasaki",
+    "737": "Goto Islands, Nagasaki",
+    "740": "Aso region, Kumamoto Prefecture",
+    "741": "Kumamoto region, Kumamoto Prefecture",
+    "742": "Kuma district, Kumamoto",
+    "743": "Amakusa and Ashikita district, Kumamoto",
+    "750": "Northern Oita Pref.",
+    "751": "Central Oita",
+    "752": "Southern Oita",
+    "753": "Western Oita",
+    "760": "Northern Miyazaki Plain",
+    "761": "Northern Miyazaki Mountain",
+    "762": "Southern Miyazaki Plain",
+    "763": "Southern part of Miyazaki",
+    "770": "Satsuma district, Kagoshima prefecture",
+    "771": "Osumi district, Kagoshima prefecture",
+    "774": "Toshima Village, Kagoshima",
+    "775": "Koshiki Islands, Kagoshima",
+    "776": "Tanegashima Island, Kagoshima",
+    "777": "Yakushima Island, Kagoshima",
+    "778": "Northern Amami, Kagoshima",
+    "779": "Southern Amami, Kagoshima",
+    "800": "Northern Okinawa Main Island",
+    "801": "Central and Southern Okinawa Main Island",
+    "802": "Kumejima Island, Okinawa",
+    "803": "Daito Islands, Okinawa",
+    "804": "Miyako Islands, Okinawa",
+    "805": "Ishigaki Island, Okinawa",
+    "806": "Yonaguni Island, Okinawa",
+    "807": "Iriomote Island, Okinawa"
+};
 
 function _geometryBBox(geometry) {
     let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
@@ -559,16 +968,160 @@ function computeRegionIntensitiesFromStations(stations) {
     return Object.entries(maxByCode).map(([code, max_int]) => ({ code, max_int }));
 }
 
-fetch('/japan-regions.geojson')
+// Keep location knowledge separate from current readings: a missing station
+// must not make its neighbours easier to accept. Reuse this catalogue across
+// snapshots and replay seeks; rebuild cached neighbours only as locations change.
+class NiedSpatialFilter {
+    constructor() {
+        this.locations = new Map();
+        this.neighbours = new Map();
+        this.regionCodes = new Map();
+        this.regionGeometry = null;
+    }
+
+    stationKey(station) {
+        return station.code ?? `${station.lat},${station.lon}`;
+    }
+
+    evaluate(stations) {
+        const current = new Map();
+        let locationsChanged = false;
+        for (const station of stations) {
+            if (!Number.isFinite(station.lat) || !Number.isFinite(station.lon) ||
+                    Math.abs(station.lat) > 90 || Math.abs(station.lon) > 180) continue;
+            const key = this.stationKey(station);
+            current.set(key, station);
+            const known = this.locations.get(key);
+            if (!known || known.lat !== station.lat || known.lng !== station.lon) {
+                this.locations.set(key, L.latLng(station.lat, station.lon));
+                this.regionCodes.delete(key);
+                locationsChanged = true;
+            }
+        }
+        if (locationsChanged) this.neighbours.clear();
+        if (this.regionGeometry !== _regionFeatureBounds) {
+            this.regionGeometry = _regionFeatureBounds;
+            this.regionCodes.clear();
+        }
+
+        const acceptedStations = [];
+        const maxByRegion = new Map();
+        for (const [key, station] of current) {
+            if (intRank(station.int) < 1) continue;
+            if (!this.neighbours.has(key)) {
+                const point = this.locations.get(key);
+                const nearby = [];
+                for (const [otherKey, otherPoint] of this.locations) {
+                    if (key === otherKey) continue;
+                    const distance = point.distanceTo(otherPoint);
+                    if (distance <= 50000) nearby.push({ key: otherKey, distance });
+                }
+                nearby.sort((a, b) => a.distance - b.distance || String(a.key).localeCompare(String(b.key)));
+                this.neighbours.set(key, nearby.slice(0, 6).map(neighbour => neighbour.key));
+            }
+            const neighbours = this.neighbours.get(key);
+            if (!neighbours.length) continue;
+            const supporters = neighbours.filter(otherKey => intRank(current.get(otherKey)?.int) >= 1).length;
+            if (supporters < Math.ceil(neighbours.length / 2)) continue;
+            acceptedStations.push(station);
+
+            if (!_regionFeatureBounds) continue;
+            if (!this.regionCodes.has(key)) {
+                this.regionCodes.set(key, findRegionCodeForPoint(station.lat, station.lon));
+            }
+            const code = this.regionCodes.get(key);
+            if (code != null && intRank(station.int) > intRank(maxByRegion.get(String(code)))) {
+                maxByRegion.set(String(code), station.int);
+            }
+        }
+        return {
+            acceptedStations,
+            areaIntensities: [...maxByRegion].map(([code, max_int]) => ({ code, max_int }))
+        };
+    }
+}
+
+// ── Taiwan region coloring (county/city, from taiwan-regions.geojson) ──
+// CWA reports don't come with a JMA-style per-region-code area_intensities
+// array — they only give per-station readings — so unlike Japan, station
+// bucketing (mirroring computeRegionIntensitiesFromStations above) is the
+// *primary* path here, not just a fallback. This also sidesteps needing a
+// CN/EN name-matching step for the join itself: bucketing by point-in-polygon
+// against each station's own lat/lon works regardless of what language (or
+// exact wording) a report's location text is in — matching by county name
+// string would be far more fragile (CWA's own "Location"/"CountyName" fields
+// aren't guaranteed to equal this geojson's COUNTYNAME exactly).
+let twRegionLayer = null;
+let _twRegionFeatureBounds = null;
+let _twAreaIntensities = []; // [{code: COUNTYNAME (Chinese), max_int}]
+
+function findTwRegionCodeForPoint(lat, lon) {
+    if (!_twRegionFeatureBounds) return null;
+    for (const { f, bbox } of _twRegionFeatureBounds) {
+        if (lon < bbox[0] || lon > bbox[2] || lat < bbox[1] || lat > bbox[3]) continue;
+        if (_pointInGeometry(lon, lat, f.geometry)) return f.properties.COUNTYNAME;
+    }
+    return null;
+}
+
+function computeTwRegionIntensitiesFromStations(stations) {
+    if (!_twRegionFeatureBounds || !stations || !stations.length) return [];
+    const maxByCode = {};
+    stations.forEach(st => {
+        if (st.int == null || st.lat == null || st.lon == null) return;
+        if (intRank(st.int) < 0) return;
+        const code = findTwRegionCodeForPoint(st.lat, st.lon);
+        if (!code) return;
+        if (!(code in maxByCode) || intRank(st.int) > intRank(maxByCode[code])) maxByCode[code] = st.int;
+    });
+    return Object.entries(maxByCode).map(([code, max_int]) => ({ code, max_int }));
+}
+
+function renderTwRegionColors() {
+    if (!twRegionLayer) return;
+    const intMap = {};
+    _twAreaIntensities.forEach(a => { if (a.code) intMap[a.code] = a.max_int; });
+    twRegionLayer.setStyle(feat => {
+        const maxInt = intMap[feat.properties.COUNTYNAME];
+        return {
+            fillColor:   maxInt ? intColor(maxInt) : '#1c1c1c',
+            fillOpacity: maxInt ? 0.78 : 0.60,
+            color:       maxInt ? '#111' : '#333',
+            weight:      maxInt ? 0.4 : 0.5,
+        };
+    });
+}
+
+function updateTwRegionColors(areaIntensities) {
+    _twAreaIntensities = areaIntensities;
+    renderTwRegionColors();
+}
+
+function resetTwRegionColors() {
+    _twAreaIntensities = [];
+    renderTwRegionColors();
+}
+
+// Resolve against this script so /dev/ja/ and /dev/zh/ use the same development
+// assets as /dev/, without falling back to production files or a language path.
+fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
     .then(gj => {
         _regionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
         regionLayer = L.geoJSON(gj, {
             style: { color: '#333', weight: 0.5, fillColor: '#1c1c1c', fillOpacity: 0.65 }
         }).addTo(map);
+        regionLayer.eachLayer(layer => {
+            const code = String(layer.feature.properties.code);
+            if (code) regionLayersByCode.set(code, layer);
+        });
+        // Loads async — if the user already switched to Taiwan-only before
+        // this resolved, the layer would otherwise appear regardless.
+        if (!showJapan()) map.removeLayer(regionLayer);
+        refreshNiedSpatialState();
     });
 
-fetch('/tsunami-regions.geojson')
+fetch(new URL('tsunami-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
     .then(gj => {
         tsunamiLayer = L.geoJSON(gj, {
@@ -581,6 +1134,16 @@ fetch('/tsunami-regions.geojson')
                 tsunamiRegionCentroids[String(code)] = [c.lat, c.lng];
             }
         });
+    });
+
+fetch(new URL('taiwan-regions.geojson', FRONTEND_ASSET_BASE))
+    .then(r => r.json())
+    .then(gj => {
+        _twRegionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
+        twRegionLayer = L.geoJSON(gj, {
+            style: { color: '#333', weight: 0.5, fillColor: '#1c1c1c', fillOpacity: 0.65 }
+        }).addTo(map);
+        if (!showTaiwan()) map.removeLayer(twRegionLayer);
     });
 
 // ── Tsunami region pin (clicking a forecast/observation row in the panel) ──
@@ -611,36 +1174,572 @@ document.getElementById('tsunami-panel').addEventListener('click', e => {
 });
 
 // ── Region colouring ──────────────────────────────────────────────────
-let _eewAreaIntensities = [];
+let eewRegionIntensities = new Map(); // code → {max_int, eventIds} for the highest active forecast
+let reportRegionIntensities = new Map();
+let reportRegionViewActive = false;
+let _visibleRegionSources = 0; // live=1, EEW=2, official report=4
+
+function eewEventKey(data) {
+    return data.event_id || String(data.origin_time ?? data.quake_time ?? data.report_time ?? Date.now());
+}
+
+function hasRegionalForecast(data) {
+    return (data.area_intensities || []).some(area => area.code != null && area.code !== '' && intRank(area.max_int) >= 0);
+}
+
+function aggregateEewRegions(events) {
+    const regions = new Map();
+    for (const [eventId, data] of events) {
+        for (const area of (data.area_intensities || [])) {
+            if (area.code == null || area.code === '' || intRank(area.max_int) < 0) continue;
+            const code = String(area.code);
+            const previous = regions.get(code);
+            const rank = intRank(area.max_int);
+            if (!previous || rank > intRank(previous.max_int)) {
+                regions.set(code, {max_int: String(area.max_int), eventIds: [eventId]});
+            } else if (rank === intRank(previous.max_int) && !previous.eventIds.includes(eventId)) {
+                previous.eventIds.push(eventId);
+            }
+        }
+    }
+    return regions;
+}
+
+function refreshEewRegionColors() {
+    eewRegionIntensities = aggregateEewRegions(activeEews);
+    _maxEewIntRank = -1;
+    for (const area of eewRegionIntensities.values()) {
+        _maxEewIntRank = Math.max(_maxEewIntRank, intRank(area.max_int));
+    }
+    renderRegionColors();
+}
+
+function getRegionDisplayState(code) {
+    if (!showJapan()) return {source: null, intensity: null};
+    code = String(code);
+    if (reportRegionViewActive) {
+        const intensity = reportRegionIntensities.get(code);
+        return {source: intensity != null ? 'report' : null, intensity};
+    }
+    const forecast = eewRegionIntensities.get(code);
+    if (forecast) return {source: 'eew', intensity: forecast.max_int};
+    if (liveRegionColouring && !liveStationsHidden && liveNiedRegionIntensities.has(code)) {
+        return {source: 'live', intensity: liveNiedRegionIntensities.get(code)};
+    }
+    return {source: null, intensity: null};
+}
 
 function renderRegionColors() {
-    if (!regionLayer) return;
-    const eewMap = {};
-    _eewAreaIntensities.forEach(a => { if (a.code) eewMap[String(a.code)] = a.max_int; });
-    regionLayer.setStyle(feat => {
-        const eewInt = eewMap[String(feat.properties.code)];
-        return {
-            fillColor:   eewInt ? intColor(eewInt) : '#1c1c1c',
-            fillOpacity: eewInt ? 0.78 : 0.60,
-            color:       eewInt ? '#111' : '#333',
-            weight:      eewInt ? 0.4 : 0.5,
-        };
+    _visibleRegionSources = 0;
+    if (regionLayer) regionLayer.eachLayer(layer => {
+        const code = String(layer.feature.properties.code);
+        const {source, intensity} = getRegionDisplayState(code);
+        // Fill and outline have independent priorities: retain the EEW fill,
+        // while supported live shaking supplies the dashed outline and colour.
+        const liveOutline = liveRegionColouring && !liveStationsHidden && (source === 'live' || source === 'eew')
+            ? liveNiedRegionIntensities.get(code) ?? null : null;
+        _visibleRegionSources |= source === 'live' ? 1 : source === 'eew' ? 2 : source === 'report' ? 4 : 0;
+        if (liveOutline != null) _visibleRegionSources |= 1;
+        const key = `${source}|${intensity}|${liveOutline}`;
+        // A station raw value can change several times per second. Repaint a
+        // polygon only when its displayed class or information source changes.
+        if (layer._regionDisplayKey === key) return;
+        layer._regionDisplayKey = key;
+        layer.setStyle({
+            fillColor: source ? intColor(intensity) : '#1c1c1c',
+            fillOpacity: source === 'live' ? 0.30 : source ? 0.78 : 0.60,
+            color: liveOutline != null ? intColor(liveOutline) : source ? '#111' : '#333',
+            weight: liveOutline != null ? 1.2 : source ? 0.4 : 0.5,
+            opacity: 1,
+            dashArray: liveOutline != null ? '4 3' : null
+        });
     });
     updateMapKey();
+    renderRegionPanel();
 }
 
-function updateRegionColors(areaIntensities) {
-    _eewAreaIntensities = areaIntensities;
-    _maxEewIntRank = -1;
-    areaIntensities.forEach(a => { const r = intRank(a.max_int); if (r > _maxEewIntRank) _maxEewIntRank = r; });
+function showReportRegionColors(areaIntensities) {
+    reportRegionViewActive = true;
+    reportRegionIntensities = new Map();
+    _maxReportIntRank = -1;
+    for (const area of areaIntensities) {
+        if (area.code == null || intRank(area.max_int) < 0) continue;
+        const code = String(area.code);
+        if (intRank(area.max_int) > intRank(reportRegionIntensities.get(code))) {
+            reportRegionIntensities.set(code, String(area.max_int));
+        }
+        _maxReportIntRank = Math.max(_maxReportIntRank, intRank(area.max_int));
+    }
     renderRegionColors();
 }
 
-function resetRegionColors() {
-    _eewAreaIntensities = [];
-    _maxEewIntRank = -1;
+function clearReportRegionColors() {
+    reportRegionViewActive = false;
+    reportRegionIntensities.clear();
+    _maxReportIntRank = -1;
     renderRegionColors();
 }
+
+// ── Regional comparison and explicit selection ────────────────────────
+let regionRows = [];
+let regionRowElements = new Map();
+let regionsCollapsed = false;
+let selectedRegionCode = null;
+let selectedRegionAnchor = null;
+let selectedRegionOutline = null;
+let _regionPanelState = null;
+map.createPane('regionSelection');
+map.getPane('regionSelection').style.zIndex = 430;
+map.getPane('regionSelection').style.pointerEvents = 'none';
+
+function regionDisplayName(code) {
+    code = String(code);
+    const nativeName = regionLayersByCode.get(code)?.feature.properties.name || code;
+    return currentLanguage === 'en' ? (regionNamesEn[code] || `Region ${code}`) : nativeName;
+}
+
+function getRegionRows() {
+    if (!showJapan() || liveStationsHidden || reportRegionViewActive) return [];
+    const codes = new Set([...liveNiedRegionIntensities.keys(), ...eewRegionIntensities.keys()]);
+    return [...codes].filter(code => regionLayersByCode.has(code)).map(code => ({
+        code,
+        live: liveNiedRegionIntensities.get(code) ?? null,
+        forecast: eewRegionIntensities.get(code)?.max_int ?? null
+    })).sort((a, b) =>
+        Math.max(intRank(b.live), intRank(b.forecast)) - Math.max(intRank(a.live), intRank(a.forecast)) ||
+        a.code.localeCompare(b.code)
+    );
+}
+
+function regionValueExplanation(source) {
+    return source === 'live'
+        ? t('No spatially supported live reading of intensity 1 or above', '周辺観測点で確認した震度1以上の値なし', '沒有獲鄰近站支持的震度1以上即時數值')
+        : t('No regional EEW forecast available', '地域別の緊急地震速報の予測なし', '尚無區域地震速報預估');
+}
+
+function setRegionIntensityBadge(element, value, source) {
+    element.className = 'region-intensity';
+    element.textContent = value ?? '—';
+    element.style.background = value != null ? intColor(value) : '#333';
+    element.style.color = intTextColor(value);
+    element.title = value == null ? regionValueExplanation(source) : '';
+}
+
+function renderRegionPanel() {
+    const panel = document.getElementById('regions-panel');
+    regionRows = getRegionRows();
+    panel.hidden = regionRows.length === 0;
+    document.body.classList.toggle('has-regions', !panel.hidden);
+    if (!regionRows.some(row => row.code === selectedRegionCode)) clearRegionSelection();
+    document.getElementById('regions-count').textContent = regionRows.length;
+    const signature = JSON.stringify([currentLanguage, regionRows.map(row => [row.code, row.live, row.forecast, regionDisplayName(row.code)])]);
+    if (signature !== _regionPanelState) {
+        _regionPanelState = signature;
+        const content = document.getElementById('regions-content');
+        const scrollTop = content.scrollTop;
+        const focused = document.activeElement;
+        const focusedCode = focused?.dataset.regionSelect ?? focused?.dataset.regionLocate;
+        const focusedLocate = focused?.dataset.regionLocate != null;
+        const fragment = document.createDocumentFragment();
+        regionRowElements = new Map();
+        for (const row of regionRows) {
+            const tr = document.createElement('tr');
+            tr.dataset.regionCode = row.code;
+            const nameCell = document.createElement('td');
+            const select = document.createElement('button');
+            select.type = 'button';
+            select.className = 'region-select';
+            select.dataset.regionSelect = row.code;
+            select.textContent = regionDisplayName(row.code);
+            nameCell.appendChild(select);
+            tr.appendChild(nameCell);
+            for (const [source, value] of [['live', row.live], ['eew', row.forecast]]) {
+                const cell = document.createElement('td');
+                const badge = document.createElement('span');
+                setRegionIntensityBadge(badge, value, source);
+                cell.appendChild(badge);
+                tr.appendChild(cell);
+            }
+            const locateCell = document.createElement('td');
+            const locate = document.createElement('button');
+            locate.type = 'button';
+            locate.className = 'region-locate';
+            locate.dataset.regionLocate = row.code;
+            locate.textContent = '⌖';
+            locate.title = `${t('Locate', '位置を表示', '定位')} ${regionDisplayName(row.code)}`;
+            locate.setAttribute('aria-label', locate.title);
+            locateCell.appendChild(locate);
+            tr.appendChild(locateCell);
+            regionRowElements.set(row.code, tr);
+            fragment.appendChild(tr);
+        }
+        document.getElementById('regions-list').replaceChildren(fragment);
+        content.scrollTop = scrollTop;
+        if (focusedCode) {
+            const row = regionRowElements.get(focusedCode);
+            (row?.querySelector(focusedLocate ? '.region-locate' : '.region-select') || document.getElementById('regions-toggle')).focus({preventScroll: true});
+        }
+    }
+    updateRegionSelectedRows();
+    renderSelectedRegion();
+    positionObsPanel();
+}
+
+function updateRegionSelectedRows() {
+    for (const [code, row] of regionRowElements) {
+        row.classList.toggle('region-selected', code === selectedRegionCode);
+        row.querySelector('.region-select').setAttribute('aria-pressed', String(code === selectedRegionCode));
+    }
+}
+
+function toggleRegionPanel() {
+    regionsCollapsed = !regionsCollapsed;
+    document.getElementById('regions-content').hidden = regionsCollapsed;
+    document.getElementById('regions-toggle').setAttribute('aria-expanded', String(!regionsCollapsed));
+    document.getElementById('regions-chevron').textContent = regionsCollapsed ? '▸' : '▾';
+    positionTsunamiPanel();
+}
+
+function clearRegionSelection() {
+    if (selectedRegionCode == null && !selectedRegionOutline) return;
+    selectedRegionCode = null;
+    selectedRegionAnchor = null;
+    if (selectedRegionOutline) map.removeLayer(selectedRegionOutline);
+    selectedRegionOutline = null;
+    document.getElementById('region-popup').hidden = true;
+    updateRegionSelectedRows();
+}
+
+function selectRegion(code, anchor) {
+    const layer = regionLayersByCode.get(code);
+    if (!layer || !regionRows.some(row => row.code === code)) return;
+    dismissStationPopup();
+    dismissTwQuakePopup();
+    if (selectedRegionCode !== code) {
+        if (selectedRegionOutline) map.removeLayer(selectedRegionOutline);
+        selectedRegionOutline = L.geoJSON(layer.feature, {
+            pane: 'regionSelection', interactive: false,
+            style: {color: '#fff', weight: 2.5, opacity: 1, fill: false}
+        }).addTo(map);
+    }
+    selectedRegionCode = code;
+    selectedRegionAnchor = anchor || layer.getBounds().getCenter();
+    updateRegionSelectedRows();
+    const row = regionRowElements.get(code);
+    if (row && !regionsCollapsed) {
+        const content = document.getElementById('regions-content');
+        const bounds = row.getBoundingClientRect();
+        const visible = content.getBoundingClientRect();
+        if (bounds.top < visible.top) content.scrollTop -= visible.top - bounds.top;
+        else if (bounds.bottom > visible.bottom) content.scrollTop += bounds.bottom - visible.bottom;
+    }
+    renderSelectedRegion();
+}
+
+function renderSelectedRegion() {
+    if (!selectedRegionCode) return;
+    const row = regionRows.find(candidate => candidate.code === selectedRegionCode);
+    if (!row) return;
+    const popup = document.getElementById('region-popup');
+    popup.hidden = false;
+    document.getElementById('region-popup-name').textContent = regionDisplayName(row.code);
+    setRegionIntensityBadge(document.getElementById('region-popup-live'), row.live, 'live');
+    setRegionIntensityBadge(document.getElementById('region-popup-eew'), row.forecast, 'eew');
+    popup.querySelector('.sp-close').setAttribute('aria-label', t('Close region details', '地域の詳細を閉じる', '關閉區域詳情'));
+    const sources = (eewRegionIntensities.get(row.code)?.eventIds || []).map(id => {
+        const data = activeEews.get(id);
+        const location = (currentLanguage === 'en' ? data?.epi_location_en : data?.epi_location_jp)?.[0] || 'EEW';
+        return `${location} #${data?.report_num ?? '—'}`;
+    });
+    const events = document.getElementById('region-popup-events');
+    events.hidden = !sources.length;
+    events.textContent = t('Forecast from: ', '予測の出典：', '預估來源：') + sources.join(' · ');
+    const notes = [];
+    if (row.live == null) notes.push(regionValueExplanation('live'));
+    if (row.forecast == null) notes.push(regionValueExplanation('eew'));
+    const note = document.getElementById('region-popup-note');
+    note.hidden = !notes.length;
+    note.textContent = notes.join(' · ');
+    positionRegionPopup();
+}
+
+function regionMapSpace() {
+    const size = map.getSize();
+    const panels = ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel'].map(id => document.getElementById(id))
+        .filter(element => element.getClientRects().length).map(element => element.getBoundingClientRect());
+    const mobile = size.x < 800;
+    const right = size.x - (!quakeSidebarCollapsed ? Math.min(258, size.x - 120) : 0) - 12;
+    let left = mobile ? 12 : Math.max(12, ...panels.map(rect => rect.right + 12));
+    const top = mobile ? Math.max(12, ...panels.map(rect => rect.bottom + 12)) : 12;
+    const timeline = document.getElementById('timeline-panel');
+    let bottom = timeline.classList.contains('visible') ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
+    const zoom = document.querySelector('.leaflet-control-zoom');
+    if (zoom) bottom = Math.min(bottom, zoom.getBoundingClientRect().top - 12);
+    const key = document.getElementById('map-key');
+    if (mobile && key.classList.contains('visible') && key.getBoundingClientRect().bottom > top) {
+        left = Math.max(left, key.getBoundingClientRect().right + 12);
+    }
+    return {left: Math.min(left, right - 120), top: Math.min(top, bottom - 120), right, bottom};
+}
+
+function locateRegion(code) {
+    collapseSidebarOnMobile();
+    selectRegion(code);
+    const layer = regionLayersByCode.get(code);
+    if (!layer || selectedRegionCode !== code) return;
+    const size = map.getSize();
+    const space = regionMapSpace();
+    map.fitBounds(layer.getBounds(), {
+        paddingTopLeft: [space.left + 12, space.top + 12],
+        paddingBottomRight: [size.x - space.right + 12, size.y - space.bottom + 12],
+        maxZoom: 10, animate: true, duration: 0.6
+    });
+}
+
+function positionRegionPopup() {
+    if (!selectedRegionAnchor || document.getElementById('region-popup').hidden) return;
+    const popup = document.getElementById('region-popup');
+    const space = regionMapSpace();
+    popup.style.width = Math.min(240, space.right - space.left) + 'px';
+    popup.style.maxHeight = (space.bottom - space.top) + 'px';
+    const point = map.latLngToContainerPoint(selectedRegionAnchor);
+    const width = popup.offsetWidth, height = popup.offsetHeight;
+    popup.style.left = Math.max(space.left, Math.min(point.x + 12, space.right - width)) + 'px';
+    popup.style.top = Math.max(space.top, Math.min(point.y - height - 12, space.bottom - height)) + 'px';
+    scheduleRegionMapLabels();
+}
+
+function handleRegionMapClick(x, y) {
+    dismissStationPopup();
+    if (!showJapan() || liveStationsHidden || reportRegionViewActive) { clearRegionSelection(); return; }
+    const anchor = map.containerPointToLatLng([x, y]);
+    const code = findRegionCodeForPoint(anchor.lat, anchor.lng);
+    if (code && regionRows.some(row => row.code === String(code))) selectRegion(String(code), anchor);
+    else clearRegionSelection();
+}
+
+document.getElementById('regions-list').addEventListener('click', event => {
+    const row = event.target.closest('tr[data-region-code]');
+    if (!row) return;
+    if (event.target.closest('.region-locate')) locateRegion(row.dataset.regionCode);
+    else selectRegion(row.dataset.regionCode);
+});
+map.on('move zoom resize', positionRegionPopup);
+
+// ── Collision-filtered regional map labels ────────────────────────────
+const REGION_LABEL_GAP = 6;
+const regionLabelShapeCache = new Map();
+let placedRegionLabels = [];
+let _regionLabelRedrawPending = false;
+const regionLabelLayer = document.createElement('div');
+regionLabelLayer.id = 'region-map-labels';
+map.getContainer().appendChild(regionLabelLayer);
+
+function regionLabelRectsOverlap(a, b, gap = REGION_LABEL_GAP) {
+    return a.left - gap < b.right && a.right + gap > b.left &&
+        a.top - gap < b.bottom && a.bottom + gap > b.top;
+}
+
+function regionLabelSegmentHitsRect(a, b, rect) {
+    let start = 0, end = 1;
+    for (const [axis, min, max] of [[0, rect.left, rect.right], [1, rect.top, rect.bottom]]) {
+        const delta = b[axis] - a[axis];
+        if (delta === 0) {
+            if (a[axis] < min || a[axis] > max) return false;
+        } else {
+            const first = (min - a[axis]) / delta, last = (max - a[axis]) / delta;
+            start = Math.max(start, Math.min(first, last));
+            end = Math.min(end, Math.max(first, last));
+            if (start > end) return false;
+        }
+    }
+    return true;
+}
+
+function regionLabelRectFits(rect, polygon) {
+    const corners = [[rect.left, rect.top], [rect.right, rect.top], [rect.right, rect.bottom], [rect.left, rect.bottom]];
+    if (!corners.every(([x, y]) => _pointInPolygonCoords(x, y, polygon))) return false;
+    // Corner checks alone miss a concavity cutting through the box, or a hole
+    // enclosed by it. No polygon boundary may intersect the rectangle either.
+    for (const ring of polygon) {
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            if (regionLabelSegmentHitsRect(ring[j], ring[i], rect)) return false;
+        }
+    }
+    return true;
+}
+
+function regionLabelPolygonArea(polygon) {
+    return polygon.reduce((area, ring, index) => {
+        let sum = 0;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            sum += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+        }
+        return area + (index === 0 ? 1 : -1) * Math.abs(sum / 2);
+    }, 0);
+}
+
+function regionLabelAnchor(polygon) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of polygon[0]) {
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+    }
+    let cell = Math.max(maxX - minX, maxY - minY) / 16;
+    if (!cell) return null;
+    let best = null;
+    // Mirrors the backend map's iterative interior-grid search, including holes.
+    for (let pass = 0; pass < 6; pass++) {
+        let distance = -1, next = null;
+        for (let x = minX; x <= maxX; x += cell) for (let y = minY; y <= maxY; y += cell) {
+            if (!_pointInPolygonCoords(x, y, polygon)) continue;
+            let nearest = Infinity;
+            for (const ring of polygon) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const a = ring[j], b = ring[i], dx = b[0] - a[0], dy = b[1] - a[1];
+                const fraction = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+                nearest = Math.min(nearest, Math.hypot(x - a[0] - fraction * dx, y - a[1] - fraction * dy));
+            }
+            if (nearest > distance) { distance = nearest; next = [x, y]; }
+        }
+        if (next) {
+            best = next;
+            minX = next[0] - cell; maxX = next[0] + cell;
+            minY = next[1] - cell; maxY = next[1] + cell;
+        }
+        cell /= 3;
+    }
+    return best;
+}
+
+function getRegionLabelShape(code) {
+    const geometry = regionLayersByCode.get(code)?.feature.geometry;
+    if (!geometry) return null;
+    if (regionLabelShapeCache.get(code)?.geometry === geometry) return regionLabelShapeCache.get(code);
+    const polygons = geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates];
+    let polygon = null, largest = -1;
+    for (const coordinates of polygons) {
+        const projected = coordinates.map(ring => ring.map(([lon, lat]) => {
+            const point = map.project([lat, lon], 0);
+            return [point.x, point.y];
+        }));
+        const area = regionLabelPolygonArea(projected);
+        if (area > largest) { largest = area; polygon = projected; }
+    }
+    const shape = {geometry, polygon, anchor: polygon ? regionLabelAnchor(polygon) : null};
+    regionLabelShapeCache.set(code, shape);
+    return shape;
+}
+
+function regionLabelObstacles() {
+    const obstacles = [], size = map.getSize(), zoom = map.getZoom();
+    const mapRect = map.getContainer().getBoundingClientRect();
+    const selectors = '#eew-panel,#obs-panel,#regions-panel,#tsunami-panel,#map-key,#quake-sidebar,#quake-sidebar-toggle,#bottom-bar,#timeline-panel,#settings-popup,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control,.leaflet-marker-icon';
+    for (const element of [...document.querySelectorAll(selectors), ...epicenterLayer.children]) {
+        if (!element.getClientRects().length) continue;
+        const rect = element.getBoundingClientRect();
+        if (rect.width && rect.height) obstacles.push({left: rect.left - mapRect.left, top: rect.top - mapRect.top, right: rect.right - mapRect.left, bottom: rect.bottom - mapRect.top});
+    }
+    const addStations = (stations, radius) => {
+        for (const station of stations) {
+            const point = map.latLngToContainerPoint(station._ll || [station.lat, station.lon]);
+            const r = typeof radius === 'function' ? radius(station) : radius;
+            if (point.x + r < 0 || point.y + r < 0 || point.x - r > size.x || point.y - r > size.y) continue;
+            obstacles.push({left: point.x - r, top: point.y - r, right: point.x + r, bottom: point.y + r});
+        }
+    };
+    const base = Math.max(6, Math.min(20, Math.round(zoom * 2 - 2)));
+    if (showJapan() && !liveStationsHidden) {
+        addStations(lastStations, Math.max(4, base - 3) / 2 + 0.5);
+        if (snetVisible) addStations(lastSnetStations, Math.max(5, Math.min(16, Math.round(zoom * 2 - 3))) / 2 + 0.5);
+    }
+    if (showTaiwan() && !liveStationsHidden) {
+        addStations(lastTwStations, station => (station.int === '0' || station.int == null ? Math.max(4, base - 3) : base) / 2 + 0.5);
+    }
+    const reportRadius = Math.max(7, Math.min(22, Math.round(zoom * 2))) / 2 + 1;
+    if (showJapan() && jmaStationsVisible) addStations(jmaStations, reportRadius);
+    if (showTaiwan() && twPtsStationsVisible) addStations(twPtsStations, reportRadius);
+    return obstacles;
+}
+
+function clearRegionMapLabels() {
+    if (regionLabelLayer.childElementCount) regionLabelLayer.replaceChildren();
+    placedRegionLabels = [];
+}
+
+function scheduleRegionMapLabels() {
+    if (mapIsMoving || map._animatingZoom) { clearRegionMapLabels(); return; }
+    if (_regionLabelRedrawPending) return;
+    _regionLabelRedrawPending = true;
+    requestAnimationFrame(() => { _regionLabelRedrawPending = false; renderRegionMapLabels(); });
+}
+
+function renderRegionMapLabels() {
+    clearRegionMapLabels();
+    if (map.getZoom() < 8 || mapIsMoving || map._animatingZoom || !showJapan() || liveStationsHidden || reportRegionViewActive) return;
+    const candidates = regionRows.map(row => ({...row, live: liveRegionColouring ? row.live : null}))
+        .filter(row => (row.live != null || row.forecast != null) && map.getBounds().intersects(regionLayersByCode.get(row.code).getBounds()))
+        .sort((a, b) => Math.max(intRank(b.live), intRank(b.forecast)) - Math.max(intRank(a.live), intRank(a.forecast)) || a.code.localeCompare(b.code));
+    const fragment = document.createDocumentFragment();
+    for (const row of candidates) {
+        const element = document.createElement('div');
+        element.className = 'region-map-label';
+        element.dataset.regionCode = row.code;
+        element.setAttribute('role', 'img');
+        const description = [regionDisplayName(row.code)];
+        for (const [source, value, text] of [['live', row.live, t('Live', '現在', '即時')], ['eew', row.forecast, 'EEW']]) {
+            if (value == null) continue;
+            const line = document.createElement('div');
+            line.className = `region-map-label-row region-map-label-${source}`;
+            const label = document.createElement('span');
+            label.textContent = text;
+            const badge = document.createElement('b');
+            setRegionIntensityBadge(badge, value, source);
+            line.append(label, badge);
+            element.appendChild(line);
+            description.push(`${text} ${value}`);
+        }
+        element.setAttribute('aria-label', description.join(' · '));
+        row.element = element;
+        fragment.appendChild(element);
+    }
+    regionLabelLayer.style.visibility = 'hidden';
+    regionLabelLayer.appendChild(fragment);
+    // Measure together before positioning so a row update needs one layout pass.
+    for (const row of candidates) { row.width = row.element.offsetWidth; row.height = row.element.offsetHeight; }
+    const obstacles = regionLabelObstacles(), size = map.getSize();
+    const scale = map.getZoomScale(map.getZoom(), 0);
+    const origin = map.project(map.containerPointToLatLng([0, 0]), 0);
+    for (const row of candidates) {
+        let placed = null;
+        const shape = placedRegionLabels.length < 12 ? getRegionLabelShape(row.code) : null;
+        if (shape?.anchor) {
+            const point = map.latLngToContainerPoint(map.unproject(shape.anchor, 0));
+            const dx = row.width / 2 + REGION_LABEL_GAP, dy = row.height / 2 + REGION_LABEL_GAP;
+            const offsets = [[0, 0]];
+            for (const step of [1, 2]) {
+                for (const [x, y] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]]) offsets.push([x * dx * step, y * dy * step]);
+            }
+            for (const [x, y] of offsets) {
+                const rect = {left: point.x + x - row.width / 2, top: point.y + y - row.height / 2, right: point.x + x + row.width / 2, bottom: point.y + y + row.height / 2};
+                if (rect.left < REGION_LABEL_GAP || rect.top < REGION_LABEL_GAP || rect.right > size.x - REGION_LABEL_GAP || rect.bottom > size.y - REGION_LABEL_GAP) continue;
+                if (obstacles.some(other => regionLabelRectsOverlap(rect, other))) continue;
+                const padded = {left: origin.x + (rect.left - REGION_LABEL_GAP) / scale, top: origin.y + (rect.top - REGION_LABEL_GAP) / scale, right: origin.x + (rect.right + REGION_LABEL_GAP) / scale, bottom: origin.y + (rect.bottom + REGION_LABEL_GAP) / scale};
+                if (!regionLabelRectFits(padded, shape.polygon)) continue;
+                placed = rect;
+                break;
+            }
+        }
+        if (placed) {
+            row.element.style.transform = `translate(${placed.left}px, ${placed.top}px)`;
+            placedRegionLabels.push({code: row.code, ...placed});
+            obstacles.push(placed);
+        } else row.element.remove();
+    }
+    regionLabelLayer.style.visibility = '';
+}
+
+map.on('movestart zoomstart', clearRegionMapLabels);
+map.on('moveend zoomend resize', scheduleRegionMapLabels);
 
 // ── Adaptive map key / legend ──────────────────────────────────────────
 // Shows intensity levels from 1 up to the highest currently shown on the
@@ -660,23 +1759,36 @@ const TSUNAMI_LEVEL_LABELS_JA = {
     'Warning':      '津波警報',
     'Major Warning':'大津波警報',
 };
+const TSUNAMI_LEVEL_LABELS_ZH = {
+    'Slight sea level change': '海面輕微變化',
+    'Advisory':     '海嘯注意報',
+    'Warning':      '海嘯警報',
+    'Major Warning':'大海嘯警報',
+};
 
-// Max intensity ranks are cached at data-change time (updateRegionColors,
+// Max intensity ranks are cached at data-change time (refreshEewRegionColors,
 // _setStationData, setJmaStations) so this stays O(1) — updateMapKey runs on
 // every canvas redraw, i.e. every animation frame during a pan.
 let _maxEewIntRank = -1;
+let _maxReportIntRank = -1;
 let _maxLiveStationRank = -1;
 let _maxJmaStationRank = -1;
 
 function currentMaxIntRank() {
-    let max = _maxEewIntRank;
+    // All three inputs here are JMA-only (Taiwan doesn't feed this legend
+    // yet), so hide it entirely in Taiwan-only mode rather than showing a
+    // rank computed from data the user asked to hide.
+    if (!showJapan()) return -1;
+    let max = reportRegionViewActive ? _maxReportIntRank : _maxEewIntRank;
     if (!liveStationsHidden && _maxLiveStationRank > max) max = _maxLiveStationRank;
     if (jmaStationsVisible && _maxJmaStationRank > max) max = _maxJmaStationRank;
     return max;
 }
 
 function currentMaxTsunamiRank() {
-    if (!activeTsunamiData) return -1;
+    // Tsunami is JMA-only and explicitly out of scope for Taiwan (see plan) —
+    // no Taiwan tsunami data exists in this app at all.
+    if (!showJapan() || !activeTsunamiData) return -1;
     return TSUNAMI_LEVELS.indexOf(activeTsunamiData.warning_level);
 }
 
@@ -688,14 +1800,28 @@ function updateMapKey() {
 
     const maxIntRank = currentMaxIntRank();
     const maxTsuRank = currentMaxTsunamiRank();
-    const state = `${maxIntRank}|${maxTsuRank}|${currentLanguage}`;
+    const state = `${maxIntRank}|${maxTsuRank}|${_visibleRegionSources}|${currentLanguage}`;
     if (state === _lastMapKeyState) return;
     _lastMapKeyState = state;
 
     let html = '';
+    if (_visibleRegionSources) {
+        html += '<div class="key-section">';
+        html += '<div class="key-title"><span class="en">Regions</span><span class="ja">地域</span><span class="zh">區域</span></div>';
+        if (_visibleRegionSources & 1) {
+            html += '<div class="key-row"><span class="key-region-swatch key-region-live"></span><span class="key-label"><span class="en">Live estimate</span><span class="ja">現在の揺れ（目安）</span><span class="zh">即時震度估計</span></span></div>';
+        }
+        if (_visibleRegionSources & 2) {
+            html += '<div class="key-row"><span class="key-region-swatch key-region-eew"></span><span class="key-label"><span class="en">EEW forecast</span><span class="ja">緊急地震速報の予測</span><span class="zh">地震速報預估</span></span></div>';
+        }
+        if (_visibleRegionSources & 4) {
+            html += '<div class="key-row"><span class="key-region-swatch key-region-eew"></span><span class="key-label"><span class="en">Official report</span><span class="ja">公式の震度情報</span><span class="zh">官方震度報告</span></span></div>';
+        }
+        html += '</div>';
+    }
     if (maxIntRank >= 1) {
         html += '<div class="key-section">';
-        html += '<div class="key-title"><span class="en">Intensity</span><span class="ja">震度</span></div>';
+        html += '<div class="key-title"><span class="en">Intensity</span><span class="ja">震度</span><span class="zh">震度</span></div>';
         for (let r = 1; r <= maxIntRank; r++) {
             const lvl = INT_LEVELS[r - 1];
             html += `<div class="key-row"><span class="key-swatch" style="background:${intColor(lvl)};color:${intTextColor(lvl)}">${lvl}</span></div>`;
@@ -705,28 +1831,32 @@ function updateMapKey() {
 
     if (maxTsuRank >= 0) {
         html += '<div class="key-section">';
-        html += '<div class="key-title"><span class="en">Tsunami</span><span class="ja">津波</span></div>';
+        html += '<div class="key-title"><span class="en">Tsunami</span><span class="ja">津波</span><span class="zh">海嘯</span></div>';
         for (let r = 0; r <= maxTsuRank; r++) {
             const lvl = TSUNAMI_LEVELS[r];
             const c = tsunamiLevelColor(lvl), tc = tsunamiLevelTextColor(lvl);
             html += `<div class="key-row"><span class="key-swatch" style="background:${c};color:${tc}"></span>`
-                  + `<span class="key-label"><span class="en">${TSUNAMI_LEVEL_LABELS_EN[lvl]}</span><span class="ja">${TSUNAMI_LEVEL_LABELS_JA[lvl]}</span></span></div>`;
+                  + `<span class="key-label"><span class="en">${TSUNAMI_LEVEL_LABELS_EN[lvl]}</span><span class="ja">${TSUNAMI_LEVEL_LABELS_JA[lvl]}</span><span class="zh">${TSUNAMI_LEVEL_LABELS_ZH[lvl]}</span></span></div>`;
         }
         html += '</div>';
     }
 
     el.innerHTML = html;
     el.classList.toggle('visible', html !== '');
-    el.title = currentLanguage === 'ja' ? '凡例' : 'Map key';
+    el.title = t('Map key', '凡例', '圖例');
 }
 
 // ── NIED station dots (canvas overlay) ───────────────────────────────
 let lastStations = [];
+const niedSpatialFilter = new NiedSpatialFilter();
+let supportedNiedStations = [];
+let liveNiedAreaIntensities = [];
+let liveNiedRegionIntensities = new Map();
 // Pre-split/sorted views of lastStations, recomputed only when the data
 // changes (in updateStations) rather than on every redraw — redraws also
 // fire on every map move frame, where re-sorting would be wasted work.
 let _zeroStations = [];
-let _labeledStations = [];
+let _activeStations = [];
 
 // Mirrors of the true live station state, kept up to date even while replay
 // is active (when live messages are diverted into replayLiveBuffer instead of
@@ -734,7 +1864,9 @@ let _labeledStations = [];
 // since the buffered messages may be diffs-only and would otherwise leave
 // unchanged stations missing.
 const liveStationCache = new Map();
+const liveEewCache = new Map(); // latest live JMA EEWs, kept separate from replay state
 const liveSnetCache = new Map();
+const liveTwStationCache = new Map();
 
 // Mirrors of the true live JMA quake-history list and WS-sourced sidebar
 // entries, kept up to date even while replay is active. Replay playback
@@ -744,6 +1876,7 @@ const liveSnetCache = new Map();
 // indefinitely after exitReplay.
 let liveQuakeHistory = null;
 let liveWsQuakeBuffer = null;
+let liveTwQuakeHistory = null; // mirrors liveQuakeHistory for lastTwHistoryData
 
 const stationCanvas = document.createElement('canvas');
 stationCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:450;';
@@ -770,27 +1903,25 @@ function redrawStations() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
     updateMapKey();
-    if (liveStationsHidden || !lastStations.length) return;
+    if (!showJapan() || liveStationsHidden || !lastStations.length) return;
 
     const z    = map.getZoom();
     const base = Math.max(6, Math.min(20, Math.round(z * 2 - 2)));
-    const zeroDiam = Math.max(4, base - 3);
+    const diam = Math.max(4, base - 3);
 
-    // draw zero/null dots first (background layer), then labeled dots sorted
+    // Draw zero/null dots first (background layer), then active dots sorted
     // ascending by intensity. Both groups are precomputed in updateStations.
-    for (const [group, isZero] of [[_zeroStations, true], [_labeledStations, false]]) {
+    for (const [group, isZero] of [[_zeroStations, true], [_activeStations, false]]) {
         group.forEach(st => {
-            const diam   = isZero ? zeroDiam : base;
             const pt     = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
             // Skip dots outside the viewport — when zoomed in (i.e. during an
             // actual quake) most of the ~2000 stations are off-screen.
             if (pt.x < -diam || pt.y < -diam || pt.x > sz.x + diam || pt.y > sz.y + diam) return;
             const r      = diam / 2;
             const opacity = isZero ? zeroOpacity(st.raw ?? -3) : 1;
-            const lbl    = isZero ? '' : (st.int || '');
 
             ctx.globalAlpha = opacity;
-            ctx.fillStyle = intColor(st.int);
+            ctx.fillStyle = st._surfaceColor;
             if (boreholeVisible && st.borehole_int != null) {
                 const bRank = intRank(st.borehole_int);
                 const bw = bRank >= 1 ? 1.5 : 0;
@@ -801,7 +1932,7 @@ function redrawStations() {
                     // Inset stroke so the border doesn't grow the shape
                     ctx.save();
                     ctx.clip();
-                    ctx.strokeStyle = intColor(st.borehole_int);
+                    ctx.strokeStyle = st._boreholeColor;
                     ctx.lineWidth = bw * 2;
                     ctx.stroke();
                     ctx.restore();
@@ -813,16 +1944,6 @@ function redrawStations() {
                 ctx.strokeStyle = 'rgba(0,0,0,0.3)';
                 ctx.lineWidth = 0.8;
                 ctx.stroke();
-            }
-
-            if (lbl) {
-                ctx.globalAlpha = 1;
-                const fs = lbl.length > 1 ? diam * 0.5 : diam * 0.68;
-                ctx.font = `700 ${fs}px sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = intTextColor(st.int);
-                ctx.fillText(lbl, pt.x, pt.y);
             }
         });
     }
@@ -865,6 +1986,7 @@ function toggleSnetVisible() {
     snetCanvas.style.display = snetVisible ? '' : 'none';
     const cb = document.getElementById('tog-snet');
     if (cb) cb.checked = snetVisible;
+    scheduleRegionMapLabels();
 }
 
 const snetCanvas = document.createElement('canvas');
@@ -881,12 +2003,13 @@ function resizeSnetCanvas() {
 }
 
 function redrawSnetStations() {
+    scheduleRegionMapLabels();
     const sz  = map.getSize();
     const dpr = window.devicePixelRatio || 1;
     const ctx = snetCanvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
-    if (!lastSnetStations.length || liveStationsHidden) return;
+    if (!showJapan() || !lastSnetStations.length || liveStationsHidden) return;
     const z    = map.getZoom();
     const base = Math.max(5, Math.min(16, Math.round(z * 2 - 3)));
     const r    = base / 2;
@@ -941,6 +2064,208 @@ resizeSnetCanvas();
 map.on('resize', () => { resizeSnetCanvas(); scheduleRedrawSnetStations(); });
 map.on('move zoom', scheduleRedrawSnetStations);
 
+// ── Taiwan/ExpTech live station dots (canvas overlay) ─────────────────
+// Mirrors the NIED live-station rendering pattern (per-station dots,
+// zero/labeled split, diff-based updates) — intensity labels are expected
+// to already be bucketed into the same '0'..'7'/'5-'/'5+' etc. strings NIED
+// stations use, so intColor/intRank/intTextColor are reused as-is. Whether
+// CWA's own scale needs a different bucketing/labeling is an open question
+// for the backend poller that will feed this, not this rendering layer.
+let lastTwStations = [];
+let _twZeroStations = [];
+let _twLabeledStations = [];
+let _twStationsByCode = new Map();
+
+const twStationCanvas = document.createElement('canvas');
+twStationCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:452;';
+map.getContainer().appendChild(twStationCanvas);
+
+function resizeTwStationCanvas() {
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    twStationCanvas.width  = sz.x * dpr;
+    twStationCanvas.height = sz.y * dpr;
+    twStationCanvas.style.width  = sz.x + 'px';
+    twStationCanvas.style.height = sz.y + 'px';
+}
+
+function redrawTwStations() {
+    scheduleRegionMapLabels();
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = twStationCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, sz.x, sz.y);
+    if (!showTaiwan() || liveStationsHidden || !lastTwStations.length) return;
+
+    const z    = map.getZoom();
+    const base = Math.max(6, Math.min(20, Math.round(z * 2 - 2)));
+    const zeroDiam = Math.max(4, base - 3);
+
+    for (const [group, isZero] of [[_twZeroStations, true], [_twLabeledStations, false]]) {
+        group.forEach(st => {
+            const diam = isZero ? zeroDiam : base;
+            const pt   = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
+            if (pt.x < -diam || pt.y < -diam || pt.x > sz.x + diam || pt.y > sz.y + diam) return;
+            const r = diam / 2;
+            ctx.globalAlpha = isZero ? zeroOpacity(st.raw ?? -3) : 1;
+            ctx.fillStyle = intColor(st.int);
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+            if (!isZero && st.int) {
+                ctx.globalAlpha = 1;
+                const lbl = st.int;
+                const fs  = lbl.length > 1 ? diam * 0.5 : diam * 0.68;
+                ctx.font = `700 ${fs}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = intTextColor(st.int);
+                ctx.fillText(lbl, pt.x, pt.y);
+            }
+        });
+    }
+    ctx.globalAlpha = 1;
+}
+
+let _redrawTwStationsPending = false;
+function scheduleRedrawTwStations() {
+    if (_redrawTwStationsPending) return;
+    _redrawTwStationsPending = true;
+    requestAnimationFrame(() => { _redrawTwStationsPending = false; redrawTwStations(); });
+}
+
+function _setTwStationData(stations) {
+    lastTwStations = stations;
+    for (const st of stations) if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+    _twZeroStations    = stations.filter(st => st.int === '0' || st.int == null);
+    _twLabeledStations = stations
+        .filter(st => st.int !== '0' && st.int != null)
+        .sort((a, b) => intRank(a.int) - intRank(b.int));
+    scheduleRedrawTwStations();
+    if (selectedStationCode && stationPopup.style.display !== 'none') {
+        const st = stations.find(s => s.code === selectedStationCode);
+        if (st) {
+            const pt = map.latLngToContainerPoint([st.lat, st.lon]);
+            showStationPopup(st, pt.x, pt.y, 'exptech');
+        }
+    }
+}
+
+function updateTwStations(stations) {
+    _twStationsByCode = new Map(stations.map(s => [s.code, s]));
+    _setTwStationData(stations);
+}
+
+function applyTwStationsDiff(changed, removed) {
+    for (const code of (removed || [])) _twStationsByCode.delete(code);
+    for (const entry of (changed || [])) _twStationsByCode.set(entry.code, entry);
+    _setTwStationData([..._twStationsByCode.values()]);
+}
+
+resizeTwStationCanvas();
+map.on('resize', () => { resizeTwStationCanvas(); scheduleRedrawTwStations(); });
+map.on('move zoom', scheduleRedrawTwStations);
+
+// ── Taiwan/CWA past-quake station dots (own canvas, mirrors jmaCanvas below) ──
+// CWA reports carry a full per-station intensity list (Intensity.ShakingArea[].
+// EqStation[]), stored server-side in tw_quake_stations and exposed via
+// /api/tw_quake_points/<earthquake_no> - this renders that snapshot when a
+// sidebar history entry is opened, same as jmaStations does for JMA's
+// /api/quake_points/<event_id>. Kept as its own canvas/state rather than
+// reusing jmaCanvas/jmaStations because those gate on showJapan(), which
+// would wrongly hide Taiwan station dots in "Taiwan only" mode.
+let twPtsStations = [];
+let _twPtsSorted = [];
+let twPtsStationsEventId = null; // the earthquake_no currently shown, or null
+let twPtsStationsVisible = false;
+let _twPtsClearTimer = null;
+
+const twPtsCanvas = document.createElement('canvas');
+twPtsCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:453;';
+map.getContainer().appendChild(twPtsCanvas);
+
+function resizeTwPtsCanvas() {
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    twPtsCanvas.width  = sz.x * dpr;
+    twPtsCanvas.height = sz.y * dpr;
+    twPtsCanvas.style.width  = sz.x + 'px';
+    twPtsCanvas.style.height = sz.y + 'px';
+}
+
+function redrawTwPtsStations() {
+    scheduleRegionMapLabels();
+    const sz  = map.getSize();
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = twPtsCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, sz.x, sz.y);
+    if (!showTaiwan() || !twPtsStationsVisible || !twPtsStations.length) return;
+    const z    = map.getZoom();
+    const base = Math.max(7, Math.min(22, Math.round(z * 2)));
+    const r    = base / 2;
+    _twPtsSorted.forEach(st => {
+        const pt = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
+        if (pt.x < -base || pt.y < -base || pt.x > sz.x + base || pt.y > sz.y + base) return;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = intColor(st.int);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        if (base >= 12) {
+            const lbl = st.int || '';
+            const fs = lbl.length > 1 ? base * 0.5 : base * 0.68;
+            ctx.font = `700 ${fs}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = intTextColor(st.int);
+            ctx.fillText(lbl, pt.x, pt.y);
+        }
+    });
+}
+
+let _redrawTwPtsPending = false;
+function scheduleRedrawTwPtsStations() {
+    if (_redrawTwPtsPending) return;
+    _redrawTwPtsPending = true;
+    requestAnimationFrame(() => { _redrawTwPtsPending = false; redrawTwPtsStations(); });
+}
+
+resizeTwPtsCanvas();
+map.on('resize', () => { resizeTwPtsCanvas(); scheduleRedrawTwPtsStations(); });
+map.on('move zoom', scheduleRedrawTwPtsStations);
+
+function clearTwPtsStations() {
+    twPtsStations = [];
+    twPtsStationsEventId = null;
+    twPtsStationsVisible = false;
+    if (_twPtsClearTimer) { clearTimeout(_twPtsClearTimer); _twPtsClearTimer = null; }
+    redrawTwPtsStations();
+}
+
+async function fetchTwPoints(earthquakeNo) {
+    if (!earthquakeNo) return;
+    try {
+        const resp = await fetch(`/api/tw_quake_points/${encodeURIComponent(earthquakeNo)}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.stations || !data.stations.length) return;
+        twPtsStations = data.stations;
+        for (const st of twPtsStations) if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+        _twPtsSorted = [...twPtsStations].sort((a, b) => intRank(a.int) - intRank(b.int));
+        twPtsStationsEventId = earthquakeNo;
+        twPtsStationsVisible = true;
+        resizeTwPtsCanvas();
+        redrawTwPtsStations();
+    } catch(e) { console.warn('TW points fetch failed', e); }
+}
+
 // ── JMA station dots (past quake point data) ─────────────────────────
 let jmaStations = [];
 let _jmaSorted = []; // jmaStations sorted by intensity; recomputed on data change only
@@ -972,13 +2297,14 @@ function resizeJmaCanvas() {
 }
 
 function redrawJmaStations() {
+    scheduleRegionMapLabels();
     const sz  = map.getSize();
     const dpr = window.devicePixelRatio || 1;
     const ctx = jmaCanvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, sz.x, sz.y);
     updateMapKey();
-    if (!jmaStationsVisible || !jmaStations.length) return;
+    if (!showJapan() || !jmaStationsVisible || !jmaStations.length) return;
     const z    = map.getZoom();
     const base = Math.max(7, Math.min(22, Math.round(z * 2)));
     const r    = base / 2;
@@ -1063,9 +2389,11 @@ function clearJmaStations() {
     jmaStationsEventId = null;
     jmaStationsVisible = false;
     jmaSidebarActiveTs = null;
+    clearReportRegionColors();
     if (liveStationsHidden) {
         liveStationsHidden = false;
         document.getElementById('obs-live-hidden').style.display = 'none';
+        renderRegionColors();
         redrawStations();
     }
     removeEpicenterMark('__jma_pts__');
@@ -1091,12 +2419,6 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
     if (jmaSidebarActiveTs === originTs) {
         clearJmaStations();
         removeEpicenterMark('__past__');
-        const eewWithAreas = [...activeEews.values()].find(d => d.area_intensities && d.area_intensities.length);
-        if (eewWithAreas) {
-            updateRegionColors(eewWithAreas.area_intensities);
-        } else {
-            resetRegionColors();
-        }
         renderSidebar(lastQuakeData);
         map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
         return;
@@ -1110,6 +2432,7 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
     removeEpicenterMark('__jma_pts__');
     jmaSidebarActiveTs = originTs;
     liveStationsHidden = true;
+    showReportRegionColors([]);
     document.getElementById('obs-live-hidden').style.display = 'block';
     document.getElementById('obs-panel').classList.add('visible');
     positionObsPanel();
@@ -1126,6 +2449,7 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
             const resp = await fetch(`/api/quake_points_near/${originTs}`);
             if (resp.ok) {
                 const body = await resp.json();
+                if (jmaSidebarActiveTs !== originTs) return;
                 if (body.stations && body.stations.length) {
                     setJmaStations(body.stations);
                     jmaStationsEventId = `near:${originTs}`;
@@ -1136,6 +2460,7 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
             }
         } catch(err) { console.warn('JMA map btn fetch failed', err); }
     }
+    if (jmaSidebarActiveTs !== originTs) return;
     // Epicenter — prefer explicit lat/lon from card, fall back to index entry
     const lat = epicLat ?? indexEntry?.lat ?? null;
     const lon = epicLon ?? indexEntry?.lon ?? null;
@@ -1144,11 +2469,10 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
     // any leftover EEW region colouring (the epicentre marker/wave animation of an
     // active EEW are left alone — only the region shading needs to reflect this view).
     if (activePastQuakeAreaIntensities && activePastQuakeTime != null && Math.abs(originTs - activePastQuakeTime) < 90) {
-        updateRegionColors(activePastQuakeAreaIntensities);
+        showReportRegionColors(activePastQuakeAreaIntensities);
     } else {
         const computed = computeRegionIntensitiesFromStations(jmaStations);
-        if (computed.length) updateRegionColors(computed);
-        else resetRegionColors();
+        showReportRegionColors(computed);
     }
     // Auto-zoom
     if (jmaStations.length) {
@@ -1180,14 +2504,34 @@ function _formatAge(ms) {
         const m = Math.floor(s / 60), r = s % 60;
         return r > 0 ? `${m}分${r}秒前` : `${m}分前`;
     }
+    if (currentLanguage === 'zh') {
+        if (s < 60) return `${s}秒前`;
+        const m = Math.floor(s / 60), r = s % 60;
+        return r > 0 ? `${m}分${r}秒前` : `${m}分前`;
+    }
     if (s < 60) return `${s}s ago`;
     const m = Math.floor(s / 60), r = s % 60;
     return r > 0 ? `${m}m ${r}s ago` : `${m}m ago`;
 }
 
-function showStationPopup(st, px, py, isSnet) {
+function showStationPopup(st, px, py, source) {
+    clearRegionSelection();
     document.getElementById('sp-name').textContent = st.code || st.name || '–';
-    const intLabel = (currentLanguage === 'ja' ? '震度 ' : 'Int. ') + (st.raw != null ? st.raw : (st.int ?? '–'));
+    const badgeEl = document.getElementById('sp-source-badge');
+    if (source === 'exptech') {
+        badgeEl.textContent = 'TREM-Net';
+        badgeEl.className = 'quake-source quake-source-exptech';
+        badgeEl.title = t(
+            'ExpTech TREM-Net (Taiwan) real-time station data — a community sensor network, not an official CWA source.',
+            'ExpTech TREM-Net（台湾）のリアルタイム観測データ。中央気象署（CWA）の公式データではありません。',
+            'ExpTech TREM-Net（台灣）即時觀測資料，屬社群感測網路，非中央氣象署（CWA）官方資料。'
+        );
+        badgeEl.style.display = '';
+    } else {
+        badgeEl.style.display = 'none';
+    }
+    const isSnet = source === 'snet';
+    const intLabel = t('Int. ', '震度 ', '震度 ') + (st.raw != null ? st.raw : (st.int ?? '–'));
     document.getElementById('sp-int-label').textContent = intLabel;
     document.getElementById('sp-int-bar').style.background = intColor(st.int);
     const pgaRow = document.getElementById('sp-pga-row');
@@ -1200,7 +2544,7 @@ function showStationPopup(st, px, py, isSnet) {
     }
     const boreholeRow = document.getElementById('sp-borehole-row');
     if (boreholeVisible && st.borehole_int != null) {
-        const bLabel = (currentLanguage === 'ja' ? '地中 ' : 'Borehole ') + (st.borehole_raw != null ? st.borehole_raw : st.borehole_int);
+        const bLabel = t('Borehole ', '地中 ', '井下 ') + (st.borehole_raw != null ? st.borehole_raw : st.borehole_int);
         document.getElementById('sp-borehole-label').textContent = bLabel;
         document.getElementById('sp-borehole-bar').style.background = intColor(st.borehole_int);
         boreholeRow.style.display = 'flex';
@@ -1210,8 +2554,8 @@ function showStationPopup(st, px, py, isSnet) {
     const ageRow = document.getElementById('sp-age-row');
     if (_snetAgeInterval) { clearInterval(_snetAgeInterval); _snetAgeInterval = null; }
     if (isSnet && snetDataTime) {
-        const prefix = currentLanguage === 'ja' ? '海底観測 · ' : 'Seafloor · ';
-        const tip    = currentLanguage === 'ja' ? '海底観測点は約1分ごとに更新されます' : 'Seafloor stations update every ~1 min';
+        const prefix = t('Seafloor · ', '海底観測 · ', '海底觀測 · ');
+        const tip    = t('Seafloor stations update every ~1 min', '海底観測点は約1分ごとに更新されます', '海底觀測站約每1分鐘更新一次');
         const updateAge = () => {
             ageRow.innerHTML = `<span title="${tip}" style="text-decoration:underline dotted;text-underline-offset:2px;cursor:help">${prefix + _formatAge(snetDataTime)}</span>`;
         };
@@ -1224,10 +2568,37 @@ function showStationPopup(st, px, py, isSnet) {
     stationPopup.style.display = 'block';
     stationPopup.style.left = px + 'px';
     stationPopup.style.top  = py + 'px';
+    scheduleRegionMapLabels();
+}
+
+// Taiwan/CWA earthquake report popup — opened by clicking the '__tw_past__'
+// epicenter marker (its own click listener, see placeMarker), dismissed by
+// any other click. Kept separate from the station click-popup above since
+// it shows a single active report rather than hit-testing a station array.
+let activeTwQuakeData = null;
+const twQuakePopup = document.getElementById('tw-quake-popup');
+
+function dismissTwQuakePopup() {
+    twQuakePopup.style.display = 'none';
+}
+
+function showTwQuakePopup(px, py) {
+    if (!activeTwQuakeData) return;
+    const d = activeTwQuakeData;
+    document.getElementById('twp-loc').textContent = (currentLanguage === 'zh' && d.location_zh) ? d.location_zh : (d.location || '–');
+    document.getElementById('twp-mag').innerHTML = 'M <b>' + (d.magnitude ?? '–') + '</b>';
+    document.getElementById('twp-depth').innerHTML = t('Depth', '深さ', '深度') + ' <b>' + (d.depth != null ? d.depth + ' km' : '–') + '</b>';
+    twQuakePopup.style.display = 'block';
+    twQuakePopup.style.left = px + 'px';
+    twQuakePopup.style.top  = py + 'px';
+    scheduleRegionMapLabels();
 }
 
 map.getContainer().addEventListener('click', function(e) {
+    if (e.target.closest('.leaflet-control')) return;
     if (e.target.closest('#station-popup')) return;
+    if (e.target.closest('#tw-quake-popup')) return;
+    dismissTwQuakePopup();
 
     const rect = map.getContainer().getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -1235,7 +2606,7 @@ map.getContainer().addEventListener('click', function(e) {
     const z  = map.getZoom();
 
     // Check S-net stations first (they're below NIED z-index but we check by proximity)
-    if (lastSnetStations.length) {
+    if (showJapan() && snetVisible && !liveStationsHidden && lastSnetStations.length) {
         const snetHitR = Math.max(5, Math.min(16, Math.round(z * 2 - 3))) / 2 + 4;
         let snetClosest = null, snetBest = Infinity;
         lastSnetStations.forEach(st => {
@@ -1245,13 +2616,31 @@ map.getContainer().addEventListener('click', function(e) {
         });
         if (snetClosest) {
             selectedStationCode = snetClosest.st.code;
-            showStationPopup(snetClosest.st, snetClosest.pt.x, snetClosest.pt.y, true);
+            showStationPopup(snetClosest.st, snetClosest.pt.x, snetClosest.pt.y, 'snet');
             L.DomEvent.stopPropagation(e);
             return;
         }
     }
 
-    if (!lastStations.length || liveStationsHidden) { dismissStationPopup(); return; }
+    // Taiwan/ExpTech stations — geographically distinct from Japan's, so hit-testing
+    // order relative to NIED doesn't matter, but checked here to sit alongside S-net.
+    if (showTaiwan() && lastTwStations.length && !liveStationsHidden) {
+        const twHitR = Math.max(6, Math.min(20, Math.round(z * 2 - 2))) / 2 + 4;
+        let twClosest = null, twBest = Infinity;
+        lastTwStations.forEach(st => {
+            const pt = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
+            const d  = Math.hypot(pt.x - mx, pt.y - my);
+            if (d < twHitR && d < twBest) { twBest = d; twClosest = { st, pt }; }
+        });
+        if (twClosest) {
+            selectedStationCode = twClosest.st.code;
+            showStationPopup(twClosest.st, twClosest.pt.x, twClosest.pt.y, 'exptech');
+            L.DomEvent.stopPropagation(e);
+            return;
+        }
+    }
+
+    if (!showJapan() || !lastStations.length || liveStationsHidden) { handleRegionMapClick(mx, my); return; }
 
     const hitR = Math.max(6, Math.min(20, Math.round(z * 2 - 2))) / 2 + 4;
     let closest = null, bestDist = Infinity;
@@ -1263,26 +2652,15 @@ map.getContainer().addEventListener('click', function(e) {
 
     if (closest) {
         selectedStationCode = closest.st.code;
-        showStationPopup(closest.st, closest.pt.x, closest.pt.y, false);
+        showStationPopup(closest.st, closest.pt.x, closest.pt.y, 'nied');
         L.DomEvent.stopPropagation(e);
     } else {
-        dismissStationPopup();
+        handleRegionMapClick(mx, my);
     }
 });
 
-function getNiedActiveCoords(stations) {
-    const high = stations.filter(st => intRank(st.int) >= 2);
-    if (high.length > 0) return high.map(st => [st.lat, st.lon]);
-    const int1 = stations.filter(st => st.int === '1');
-    const clustered = new Set();
-    for (let i = 0; i < int1.length; i++) {
-        for (let j = i + 1; j < int1.length; j++) {
-            const dlat = int1[i].lat - int1[j].lat;
-            const dlon = int1[i].lon - int1[j].lon;
-            if (Math.hypot(dlat, dlon) < 0.45) { clustered.add(i); clustered.add(j); }
-        }
-    }
-    return clustered.size >= 2 ? [...clustered].map(i => [int1[i].lat, int1[i].lon]) : null;
+function getNiedActiveCoords() {
+    return supportedNiedStations.length ? supportedNiedStations.map(st => [st.lat, st.lon]) : null;
 }
 
 function zoomToNiedStations() {
@@ -1295,7 +2673,7 @@ function zoomToNiedStations() {
 }
 
 function zoomAfterClear() {
-    const niedCoords = getNiedActiveCoords(lastStations);
+    const niedCoords = getNiedActiveCoords();
     if (niedCoords && niedCoords.length > 0 && !ryukyuStations && epicenterMarks.size === 0) {
         niedZoomActive = true;
         niedZoomCoords = niedCoords;
@@ -1318,13 +2696,18 @@ function _setStationData(stations) {
     lastStations = stations;
     // Cache a LatLng per station: redraws run every frame during a pan, and
     // passing [lat, lon] arrays would allocate a fresh LatLng per dot per frame.
-    for (const st of stations) if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+    for (const st of stations) {
+        if (!st._ll) st._ll = L.latLng(st.lat, st.lon);
+        // Calculate colours only when station data changes, not on every pan.
+        st._surfaceColor = niedIntensityColor(st.raw, st.int);
+        st._boreholeColor = niedIntensityColor(st.borehole_raw, st.borehole_int);
+    }
     _zeroStations    = stations.filter(st => st.int === '0' || st.int == null);
-    _labeledStations = stations
+    _activeStations = stations
         .filter(st => st.int !== '0' && st.int != null)
         .sort((a, b) => intRank(a.int) - intRank(b.int));
-    _maxLiveStationRank = _labeledStations.length
-        ? intRank(_labeledStations[_labeledStations.length - 1].int) : -1;
+    _maxLiveStationRank = _activeStations.length
+        ? intRank(_activeStations[_activeStations.length - 1].int) : -1;
     scheduleRedrawStations();
     if (selectedStationCode && stationPopup.style.display !== 'none') {
         const st = stations.find(s => s.code === selectedStationCode);
@@ -1333,24 +2716,14 @@ function _setStationData(stations) {
             showStationPopup(st, pt.x, pt.y);
         }
     }
-    let maxInt = null;
     let maxPga = null;
     stations.forEach(st => {
-        if (intRank(st.int) > intRank(maxInt)) maxInt = st.int;
         if (st.pga != null && (maxPga == null || st.pga > maxPga)) maxPga = st.pga;
     });
     if (!replayActive) {
         _niedEverReceived = true;
         _niedLog.push({time: Date.now(), hasPga: maxPga !== null});
         _evalNiedWarning();
-    }
-    if (maxInt) {
-        const box = document.getElementById('obs-int-box');
-        box.textContent = maxInt;
-        box.style.background = intColor(maxInt);
-        box.style.color = intTextColor(maxInt);
-        document.getElementById('obs-panel').classList.add('visible');
-        positionObsPanel();
     }
     const pgaBox   = document.getElementById('obs-pga-box');
     const pgaLabel = document.getElementById('obs-pga-label');
@@ -1364,11 +2737,34 @@ function _setStationData(stations) {
         pgaBox.style.display   = 'none';
         pgaLabel.style.display = 'none';
     }
+    refreshNiedSpatialState();
+}
 
+function refreshNiedSpatialState() {
+    const result = niedSpatialFilter.evaluate(lastStations);
+    supportedNiedStations = result.acceptedStations;
+    liveNiedAreaIntensities = result.areaIntensities;
+    liveNiedRegionIntensities = new Map(liveNiedAreaIntensities.map(area => [area.code, area.max_int]));
+    renderRegionColors();
+    let maxInt = null;
+    for (const station of supportedNiedStations) {
+        if (intRank(station.int) > intRank(maxInt)) maxInt = station.int;
+    }
+    // Zero means all available readings are quiet. An unsupported positive
+    // reading is unknown, not proof of zero shaking; never leave an old peak.
+    if (!maxInt && lastStations.length && lastStations.every(st => intRank(st.int) === 0)) maxInt = '0';
+    const box = document.getElementById('obs-int-box');
+    box.textContent = maxInt ?? '—';
+    box.style.background = intColor(maxInt);
+    box.style.color = intTextColor(maxInt);
+    box.title = maxInt == null
+        ? t('No spatially supported intensity of 1 or above', '周辺観測点で確認できる震度1以上の揺れなし', '沒有獲鄰近觀測站支持的震度1以上資料')
+        : t('Current live maximum after checking nearby surface stations', '周辺の地表観測点で確認した現在の最大震度の目安', '經鄰近地表觀測站確認的目前最大震度估計');
+    document.getElementById('obs-panel').classList.toggle('visible', showJapan() && (lastStations.length > 0 || liveStationsHidden));
+    positionObsPanel();
+    if (!showJapan()) return;
     const hadRyukyuStations = ryukyuStations;
-    ryukyuStations = stations.some(st =>
-        st.int && st.int !== '0' && isRyukyuCoord(st.lat, st.lon)
-    );
+    ryukyuStations = supportedNiedStations.some(st => isRyukyuCoord(st.lat, st.lon));
     if (ryukyuStations && !hadRyukyuStations && epicenterMarks.size === 0) {
         if (jmaSidebarActiveTs !== null) { clearJmaStations(); renderSidebar(lastQuakeData); }
         map.flyTo(RYUKYU_CENTER, RYUKYU_ZOOM, { animate: true, duration: 1 });
@@ -1377,7 +2773,7 @@ function _setStationData(stations) {
     }
 
     const hadNiedZoom = niedZoomActive;
-    const niedCoords = getNiedActiveCoords(stations);
+    const niedCoords = getNiedActiveCoords();
     niedZoomActive = !!(niedCoords && niedCoords.length > 0);
     if (niedZoomActive) niedZoomCoords = niedCoords;
 
@@ -1448,7 +2844,16 @@ function animateWaves() {
     if (waveMap.size === 0) { waveAnimFrame = null; return; }
     const now = (replayActive && replayClock != null) ? currentReplayClock() : Date.now() / 1000;
     let renderer = null;
-    for (const entry of waveMap.values()) {
+    for (const [key, entry] of waveMap) {
+        // Data source filter — same 'tw:' prefix convention as epicenter marker
+        // keys. Circles are removed (not just skipped) when hidden so a filter
+        // switch takes effect immediately rather than only on next redraw, and
+        // nulled so they're cleanly recreated if the filter switches back.
+        if ((key.startsWith('tw:') ? !showTaiwan() : !showJapan())) {
+            if (entry.pCircle) { map.removeLayer(entry.pCircle); entry.pCircle = null; }
+            if (entry.sCircle) { map.removeLayer(entry.sCircle); entry.sCircle = null; }
+            continue;
+        }
         const { lat, lon, depthKm, originTimeSec } = entry;
         const elapsed = now - originTimeSec;
         const pR = seismicRadiusKm(elapsed, depthKm, false) * 1000; // metres
@@ -1517,10 +2922,43 @@ function placeMarker(key, lat, lon, isPlum, isEew) {
         const el = document.createElement('div');
         el.style.cssText = 'position:absolute;top:0;left:0;';
         el.innerHTML = isEew ? EPICENTRE_HTML_FLASH : EPICENTRE_HTML;
+        if (key === '__tw_past__') {
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', (e) => {
+                const pt = map.latLngToContainerPoint([lat, lon]);
+                showTwQuakePopup(pt.x, pt.y);
+                e.stopPropagation();
+            });
+        }
         epicenterLayer.appendChild(el);
         const mark = { _isDomMark: true, el, lat, lon };
         positionEpicenterMark(mark);
         epicenterMarks.set(key, mark);
+    }
+    applyEpicenterVisibility(key);
+}
+
+// Country-scoped marker keys: '__tw_past__' (Taiwan/CWA post-event) and any
+// 'tw:'-prefixed key (Taiwan live EEW, see placeAllTwEewEpicenters) — every
+// other key is JMA's. Called after every placeMarker so a marker placed
+// while its country is filtered out doesn't flash visible even briefly, and
+// from reapplyDataSourceFilter() to update markers already on the map.
+function isTwEpicenterKey(key) {
+    return key === '__tw_past__' || key.startsWith('tw:');
+}
+
+function applyEpicenterVisibility(onlyKey) {
+    const keys = onlyKey !== undefined ? [onlyKey] : [...epicenterMarks.keys()];
+    for (const key of keys) {
+        const mark = epicenterMarks.get(key);
+        if (!mark) continue;
+        const visible = isTwEpicenterKey(key) ? showTaiwan() : showJapan();
+        if (mark._isDomMark) {
+            mark.el.style.display = visible ? '' : 'none';
+        } else {
+            if (visible && !map.hasLayer(mark)) map.addLayer(mark);
+            else if (!visible && map.hasLayer(mark)) map.removeLayer(mark);
+        }
     }
 }
 
@@ -1561,6 +2999,7 @@ function clearOffshoreObsRegions() {
 
 function drawOffshoreObsRegions(data) {
     clearOffshoreObsRegions();
+    if (!showJapan()) return; // tsunami is JMA-only, out of scope for Taiwan
     const lats = data.obs_lats || [], lons = data.obs_lons || [], radii = data.obs_radii_km || [];
     const estimated = data.obs_loc_estimated || [];
     const namesEn = data.obs_station_names_en || [], namesJa = data.obs_station_names || [];
@@ -1636,10 +3075,17 @@ function kindLabelJa(code) {
     if (t === 'advisory') return '注意報';
     return '予報';
 }
+function kindLabelZh(code) {
+    const t = kindTier(code);
+    if (t === 'major')    return '大海嘯';
+    if (t === 'warning')  return '警報';
+    if (t === 'advisory') return '注意報';
+    return '預報';
+}
 
 function renderTsunamiCard() {
     const panel = document.getElementById('tsunami-panel');
-    if (!activeTsunamiData && !activeTsunamiObs) {
+    if (!showJapan() || (!activeTsunamiData && !activeTsunamiObs)) {
         panel.classList.remove('visible');
         positionTsunamiPanel();
         updateMapKey();
@@ -1655,7 +3101,8 @@ function renderTsunamiCard() {
         const ltc = tsunamiLevelTextColor(level);
         const levelEn = {'Major Warning':'Major Tsunami Warning','Warning':'Tsunami Warning','Advisory':'Tsunami Advisory','Slight sea level change':'Slight Sea Level Change'}[level] || level;
         const levelJa = {'Major Warning':'大津波警報','Warning':'津波警報','Advisory':'津波注意報','Slight sea level change':'若干の海面変動'}[level] || level;
-        html += `<div class="tsun-header"><span class="tsun-level-badge" style="background:${lc};color:${ltc}"><span class="en">${levelEn}</span><span class="ja">${levelJa}</span></span></div>`;
+        const levelZh = {'Major Warning':'大海嘯警報','Warning':'海嘯警報','Advisory':'海嘯注意報','Slight sea level change':'海面輕微變化'}[level] || level;
+        html += `<div class="tsun-header"><span class="tsun-level-badge" style="background:${lc};color:${ltc}"><span class="en">${levelEn}</span><span class="ja">${levelJa}</span><span class="zh">${levelZh}</span></span></div>`;
         html += `<div class="tsun-time">${formatJst(d.report_time)}</div>`;
 
         const KIND_PRIORITY = {'major':4,'warning':3,'advisory':2,'forecast':1};
@@ -1671,12 +3118,12 @@ function renderTsunamiCard() {
         // gauge-limited observations — so it must not render as a plain "Nm".
         function fmtHeight(h, hCond, over) {
             if (h > 0) return over
-                ? `<span class="en">over ${h}m</span><span class="ja">${h}m超</span>`
+                ? `<span class="en">over ${h}m</span><span class="ja">${h}m超</span><span class="zh">超過${h}公尺</span>`
                 : h + 'm';
-            if (hCond === '巨大') return `<span class="en">Huge</span><span class="ja">巨大</span>`;
-            if (hCond === '高い') return `<span class="en">High</span><span class="ja">高い</span>`;
-            if (hCond === '微弱') return `<span class="en">Faint</span><span class="ja">微弱</span>`;
-            if (hCond === '欠測') return `<span class="en">No Data</span><span class="ja">欠測</span>`;
+            if (hCond === '巨大') return `<span class="en">Huge</span><span class="ja">巨大</span><span class="zh">巨大</span>`;
+            if (hCond === '高い') return `<span class="en">High</span><span class="ja">高い</span><span class="zh">高</span>`;
+            if (hCond === '微弱') return `<span class="en">Faint</span><span class="ja">微弱</span><span class="zh">微弱</span>`;
+            if (hCond === '欠測') return `<span class="en">No Data</span><span class="ja">欠測</span><span class="zh">無資料</span>`;
             return '–';
         }
         // Compact "DD日HH:MM" JST formatting, matching JMA's own forecast displays
@@ -1688,13 +3135,13 @@ function renderTsunamiCard() {
         // Forecast region status before a numeric/qualitative max height is known:
         // either an estimated arrival time or a "presumed arriving" / "confirmed" status
         function fmtArrivalStatus(cond, arrivalTs) {
-            if (cond === '津波到達中と推測') return `<span class="en">Tsunami presumed arriving</span><span class="ja">津波到達中と推測</span>`;
-            if (cond === '第１波の到達を確認') return `<span class="en">First wave confirmed</span><span class="ja">第１波の到達を確認</span>`;
-            if (cond === '第１波識別不能') return `<span class="en">First wave unclear</span><span class="ja">第１波識別不能</span>`;
-            if (cond === '不明') return `<span class="en">Unknown</span><span class="ja">不明</span>`;
+            if (cond === '津波到達中と推測') return `<span class="en">Tsunami presumed arriving</span><span class="ja">津波到達中と推測</span><span class="zh">推測海嘯已抵達</span>`;
+            if (cond === '第１波の到達を確認') return `<span class="en">First wave confirmed</span><span class="ja">第１波の到達を確認</span><span class="zh">已確認第一波抵達</span>`;
+            if (cond === '第１波識別不能') return `<span class="en">First wave unclear</span><span class="ja">第１波識別不能</span><span class="zh">無法辨識第一波</span>`;
+            if (cond === '不明') return `<span class="en">Unknown</span><span class="ja">不明</span><span class="zh">不明</span>`;
             if (arrivalTs) {
                 const t = fmtCompactJst(arrivalTs);
-                return `<span class="en">Est. arrival ${t}</span><span class="ja">到達予想 ${t}</span>`;
+                return `<span class="en">Est. arrival ${t}</span><span class="ja">到達予想 ${t}</span><span class="zh">預估抵達 ${t}</span>`;
             }
             return '–';
         }
@@ -1711,14 +3158,18 @@ function renderTsunamiCard() {
                 regionCode: (d.region_codes || [])[i] || '',
             })).filter(r => !TSUNAMI_LIFTED_KINDS.has(r.code)); // stood-down coasts (replayed history)
             rows.sort((a, b) => heightSortKey(b.h, b.hCond, b.code) - heightSortKey(a.h, a.hCond, a.code));
-            html += `<div class="tsun-section-label"><span class="en">Forecast Regions</span><span class="ja">予報・警報地域</span></div><div class="tsun-list">`;
+            html += `<div class="tsun-section-label"><span class="en">Forecast Regions</span><span class="ja">予報・警報地域</span><span class="zh">預報・警報地區</span></div><div class="tsun-list">`;
             rows.forEach(r => {
                 const kc = kindColor(r.code), ktc = kindTextColor(r.code);
                 // Before a max wave height/condition is reported, show the first-wave
                 // arrival status (estimated arrival time, "presumed arriving", etc.)
                 const heightCell = (r.h <= 0 && !r.hCond) ? fmtArrivalStatus(r.fCond, r.arrival) : fmtHeight(r.h, r.hCond, r.over);
                 const clickable = tsunamiRegionCentroids[String(r.regionCode)] ? ' tsun-row-clickable' : '';
-                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span></span><span class="tsun-row-height">${heightCell}</span><span class="tsun-row-kind" style="background:${kc};color:${ktc}"><span class="en">${kindLabelEn(r.code)}</span><span class="ja">${kindLabelJa(r.code)}</span></span></div>`;
+                // r.en/r.ja are JMA region names with no zh translation table (would
+                // need one covering every JMA tsunami forecast area code, akin to
+                // eng_codes.py but for Chinese - not built, out of scope for now) -
+                // zh mode falls back to the English name rather than guessing one.
+                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span><span class="zh">${r.ja}</span></span><span class="tsun-row-height">${heightCell}</span><span class="tsun-row-kind" style="background:${kc};color:${ktc}"><span class="en">${kindLabelEn(r.code)}</span><span class="ja">${kindLabelJa(r.code)}</span><span class="zh">${kindLabelZh(r.code)}</span></span></div>`;
             });
             html += '</div>';
         }
@@ -1732,10 +3183,10 @@ function renderTsunamiCard() {
                 regionCode: (d.obs_region_codes || [])[i] || '',
             }));
             rows.sort((a, b) => heightSortKey(b.h, b.hCond, '') - heightSortKey(a.h, a.hCond, ''));
-            html += `<div class="tsun-sep"></div><div class="tsun-section-label"><span class="en">Observations</span><span class="ja">観測</span></div><div class="tsun-list">`;
+            html += `<div class="tsun-sep"></div><div class="tsun-section-label"><span class="en">Observations</span><span class="ja">観測</span><span class="zh">觀測</span></div><div class="tsun-list">`;
             rows.forEach(r => {
                 const clickable = tsunamiRegionCentroids[String(r.regionCode)] ? ' tsun-row-clickable' : '';
-                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span></span><span class="tsun-row-height" style="color:#4fc3f7">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
+                html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span><span class="zh">${r.ja}</span></span><span class="tsun-row-height" style="color:#4fc3f7">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
             });
             html += '</div>';
         }
@@ -1751,11 +3202,15 @@ function renderTsunamiCard() {
         }));
         rows.sort((a, b) => heightSortKey(b.h, b.hCond, '') - heightSortKey(a.h, a.hCond, ''));
         if (d) html += '<div class="tsun-sep"></div>';
-        html += `<div class="tsun-section-label"><span class="en">Offshore Obs.</span><span class="ja">沖合観測</span></div><div class="tsun-list">`;
+        html += `<div class="tsun-section-label"><span class="en">Offshore Obs.</span><span class="ja">沖合観測</span><span class="zh">近海觀測</span></div><div class="tsun-list">`;
         rows.forEach(r => {
             const estBadge = r.estimated
-                ? '<span class="tsun-row-est-badge" title="Estimated location — exact station position unknown / 推定位置 — 観測点の正確な位置は不明">~</span>' : '';
-            html += `<div class="tsun-row"><span class="tsun-row-name"><span class="en">${r.nameEn}${estBadge}</span><span class="ja">${r.nameJa}${estBadge}</span></span><span class="tsun-row-height" style="color:#81c995">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
+                ? '<span class="tsun-row-est-badge" title="Estimated location — exact station position unknown / 推定位置 — 観測点の正確な位置は不明 / 推估位置－確切觀測站位置不明">~</span>' : '';
+            // nameEn already falls back to the Japanese name when no English one
+            // exists (see the .map above) - zh does the same, following that
+            // established fallback chain rather than a separate zh translation
+            // table for station names (none exists, see the tsun-row-name note above).
+            html += `<div class="tsun-row"><span class="tsun-row-name"><span class="en">${r.nameEn}${estBadge}</span><span class="ja">${r.nameJa}${estBadge}</span><span class="zh">${r.nameJa}${estBadge}</span></span><span class="tsun-row-height" style="color:#81c995">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
         });
         html += '</div>';
     }
@@ -1769,14 +3224,45 @@ function renderTsunamiCard() {
 }
 
 function positionTsunamiPanel() {
+    positionRegionsPanel();
     const panel = document.getElementById('tsunami-panel');
-    if (!panel.classList.contains('visible')) return;
-    const obsEl = document.getElementById('obs-panel');
-    const eewEl = document.getElementById('eew-panel');
-    const anchor = obsEl.classList.contains('visible') ? obsEl : eewEl;
-    const rect = anchor.getBoundingClientRect();
-    panel.style.top  = (rect.bottom + 6) + 'px';
-    panel.style.left = '10px';
+    if (panel.classList.contains('visible')) {
+        const regionsEl = document.getElementById('regions-panel');
+        const obsEl = document.getElementById('obs-panel');
+        const eewEl = document.getElementById('eew-panel');
+        const anchor = !regionsEl.hidden ? regionsEl : obsEl.classList.contains('visible') ? obsEl : eewEl;
+        panel.style.top = (anchor.getBoundingClientRect().bottom + 6) + 'px';
+        panel.style.left = '10px';
+    }
+    positionMapKey();
+    positionRegionPopup();
+    scheduleRegionMapLabels();
+}
+
+function positionRegionsPanel() {
+    const panel = document.getElementById('regions-panel');
+    if (panel.hidden) return;
+    const obs = document.getElementById('obs-panel');
+    const anchor = obs.classList.contains('visible') ? obs : document.getElementById('eew-panel');
+    const top = anchor.getBoundingClientRect().bottom + 6;
+    const tsunami = document.getElementById('tsunami-panel');
+    const tsunamiHeight = tsunami.classList.contains('visible') ? tsunami.offsetHeight + 6 : 0;
+    const bottomReserve = window.innerWidth <= 650 ? 90 : 50;
+    const key = document.getElementById('map-key');
+    const bottom = key.classList.contains('visible')
+        ? Math.min(window.innerHeight - bottomReserve, key.getBoundingClientRect().bottom - 80)
+        : window.innerHeight - bottomReserve;
+    panel.style.top = top + 'px';
+    panel.style.maxHeight = Math.max(36, Math.min(240, bottom - top - tsunamiHeight - 12)) + 'px';
+}
+
+function positionMapKey() {
+    const key = document.getElementById('map-key');
+    if (!key.classList.contains('visible')) return;
+    const bottom = Math.max(...['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']
+        .map(id => document.getElementById(id)).filter(element => element.getClientRects().length)
+        .map(element => element.getBoundingClientRect().bottom));
+    key.style.maxHeight = Math.max(40, key.getBoundingClientRect().bottom - bottom - 8) + 'px';
 }
 
 // ── EEW panel ─────────────────────────────────────────────────────────
@@ -1786,6 +3272,7 @@ function buildEewCard(data) {
     const isWarning  = data.warning;
     const typeEnText = isPlum ? 'EEW (PLUM Method)' : isFlash ? 'EEW (Flash Report)' : (isWarning ? 'EEW (Warning)' : 'EEW (Forecast)');
     const typeJaText = isPlum ? '緊急地震速報（PLUM法）' : isFlash ? '緊急地震速報（速報）' : (isWarning ? '緊急地震速報（警報）' : '緊急地震速報（予報）');
+    const typeZhText = isPlum ? '緊急地震速報（PLUM法）' : isFlash ? '緊急地震速報（速報）' : (isWarning ? '緊急地震速報（警報）' : '緊急地震速報（預報）');
     const reportNo   = data.report_num || '–';
     const maxInt     = (isPlum || isFlash) ? '?' : (data.max_int != null ? String(data.max_int) : '–');
     const locEn      = (data.epi_location_en && data.epi_location_en.length ? data.epi_location_en[0] : '–');
@@ -1797,30 +3284,104 @@ function buildEewCard(data) {
     const lpgm       = (isPlum || isFlash) ? null : lpgmClass(data.max_lpgm);
     const finalEn    = data.last_report ? '  [Final]' : '';
     const finalJa    = data.last_report ? '  [最終]' : '';
+    const finalZh    = data.last_report ? '  [最終]' : '';
     const div = document.createElement('div');
     div.className = 'eew-card';
     div.innerHTML =
-        `<div class="eew-type"><span class="en">${typeEnText}  #${reportNo}${finalEn}</span><span class="ja">${typeJaText}  第${reportNo}報${finalJa}</span></div>` +
+        `<div class="eew-type"><span class="en">${typeEnText}  #${reportNo}${finalEn}</span><span class="ja">${typeJaText}  第${reportNo}報${finalJa}</span><span class="zh">${typeZhText}  第${reportNo}報${finalZh}</span></div>` +
         `<div class="eew-int-box" style="background:${(isPlum || isFlash) ? '#555' : intColor(maxInt)};color:${(isPlum || isFlash) ? '#aaa' : intTextColor(maxInt)}">${maxInt}</div>` +
         (lpgm ? `<div class="eew-lpgm-box" style="background:${lpgmColor(lpgm)};color:${lpgmTextColor(lpgm)}">` +
                     `<span class="eew-lpgm-label">` +
                         `<span class="en">Est. max long-period<br>ground motion class</span>` +
                         `<span class="ja">推定 最大長周期<br>地震動階級</span>` +
+                        `<span class="zh">預估 最大長週期<br>地震動階級</span>` +
                     `</span>` +
                     `<span class="eew-lpgm-val">${lpgm}</span>` +
                 `</div>` : '') +
-        `<div class="eew-location"><span class="en">${locEn}</span><span class="ja">${locJa}</span></div>` +
-        `<div class="eew-detail">M ${mag}  Depth ${depth} km</div>` +
-        (isPlum ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Hypothetical source – no detailed info</span><span class="ja">仮定震源要素</span></div>` : '') +
-        (isFlash ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Intensity forecast not yet available</span><span class="ja">震度予測未計算</span></div>` : '') +
+        `<div class="eew-location"><span class="en">${locEn}</span><span class="ja">${locJa}</span><span class="zh">${locJa}</span></div>` +
+        `<div class="eew-detail">M ${mag}  <span class="en">Depth</span><span class="ja">深さ</span><span class="zh">深度</span> ${depth} km</div>` +
+        (isPlum ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Hypothetical source – no detailed info</span><span class="ja">仮定震源要素</span><span class="zh">假定震源要素</span></div>` : '') +
+        (isFlash ? `<div class="eew-detail" style="color:#aaa;font-style:italic"><span class="en">Intensity forecast not yet available</span><span class="ja">震度予測未計算</span><span class="zh">震度預測尚未計算</span></div>` : '') +
+        `<div class="eew-region-status">` +
+            (hasRegionalForecast(data)
+                ? '<span class="en">Regional forecasts available</span><span class="ja">地域別の予測震度あり</span><span class="zh">有區域震度預估</span>'
+                : '<span class="en">Regional forecast unavailable</span><span class="ja">地域別の予測震度なし</span><span class="zh">尚無區域震度預估</span>') +
+        `</div>` +
         `<div class="eew-time">${quakeTime}</div>`;
     return div;
 }
 
+// Taiwan/ExpTech intensity index (0-9) → the same '0'..'7'/'5-'/'5+' string
+// labels JMA's shindo scale uses, per ExpTech's own Intensity[] table
+// (confirmed from their live production trem.js) — 0-4 plain, 5=5-,6=5+,7=6-,8=6+,9=7.
+const TW_MAX_INT_LABELS = ['0','1','2','3','4','5-','5+','6-','6+','7'];
+function twMaxIntLabel(n) {
+    return (n != null && TW_MAX_INT_LABELS[n] != null) ? TW_MAX_INT_LABELS[n] : null;
+}
+
+// Taiwan is UTC+8 (not JST's +9) — eq.time from ExpTech is epoch milliseconds,
+// unlike JMA's unix-seconds convention, so this can't reuse formatJst() as-is.
+function formatCwaTime(epochMs) {
+    const d = new Date(epochMs + 8 * 3600 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}/${pad(d.getUTCMonth()+1)}/${pad(d.getUTCDate())} ` +
+           `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} CST`;
+}
+
+function buildTwEewCard(data) {
+    const eq = data.eq || {};
+    const isCwa = data.author === 'cwa';
+    const maxLabel = twMaxIntLabel(eq.max);
+    const div = document.createElement('div');
+    div.className = 'eew-card';
+    div.innerHTML =
+        `<div class="eew-type"><span class="en">Taiwan EEW</span><span class="ja">台湾EEW</span><span class="zh">台灣地震速報</span>  #${data.serial ?? '–'}` +
+            (isCwa ? ` <span class="quake-source quake-source-cwa" style="font-size:0.85em">CWA</span>` : '') +
+        `</div>` +
+        `<div class="eew-int-box" style="background:${maxLabel ? intColor(maxLabel) : '#555'};color:${maxLabel ? intTextColor(maxLabel) : '#aaa'}">${maxLabel ?? '?'}</div>` +
+        `<div class="eew-location">${eq.loc || '–'}</div>` +
+        `<div class="eew-detail">M ${eq.mag ?? '–'}  <span class="en">Depth</span><span class="ja">深さ</span><span class="zh">深度</span> ${eq.depth ?? '–'} km</div>` +
+        `<div class="eew-time">${eq.time != null ? formatCwaTime(eq.time) : '–'}</div>`;
+    return div;
+}
+
+// Mirrors placeAllEpicenters() for Taiwan EEWs — kept as its own function
+// (rather than merged into activeEews' iteration) since activeTwEews' data
+// shape (eq.lat/eq.lon nested, not flat) differs from JMA's.
+function placeAllTwEewEpicenters() {
+    for (const [key, data] of activeTwEews) {
+        const eq = data.eq || {};
+        if (eq.lat != null && eq.lon != null) placeMarker('tw:' + key, eq.lat, eq.lon, false, true);
+    }
+}
+
+function clearTwEewDisplay(key) {
+    if (key !== undefined) {
+        activeTwEews.delete(key);
+        removeEpicenterMark('tw:' + key);
+        clearWaveForKey('tw:' + key);
+    } else {
+        for (const k of activeTwEews.keys()) {
+            removeEpicenterMark('tw:' + k);
+            clearWaveForKey('tw:' + k);
+        }
+        activeTwEews.clear();
+    }
+    renderEewPanels();
+}
+
 function renderEewPanels() {
+    refreshEewRegionColors();
     const container = document.getElementById('eew-cards');
     container.innerHTML = '';
-    if (activeEews.size === 0) {
+    const jpEews   = showJapan()  ? activeEews   : new Map();
+    const twEews   = showTaiwan() ? activeTwEews : new Map();
+    // CWA post-event reports (activeTwQuakeData) never render here - unlike
+    // JMA EEW/live Taiwan EEW, they're never "in progress"/live, only ever
+    // a finalized historical report, so they don't belong in this live-status
+    // panel. They still get an epicenter marker/popup, region coloring, and
+    // their own sidebar entry - see the tw_earthquake displayData handler.
+    if (jpEews.size === 0 && twEews.size === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
         positionObsPanel();
@@ -1828,13 +3389,22 @@ function renderEewPanels() {
     }
     document.getElementById('no-eew-msg').style.display = 'none';
     let first = true;
-    for (const data of activeEews.values()) {
+    for (const data of jpEews.values()) {
         if (!first) {
             const sep = document.createElement('div');
             sep.className = 'eew-card-sep';
             container.appendChild(sep);
         }
         container.appendChild(buildEewCard(data));
+        first = false;
+    }
+    for (const data of twEews.values()) {
+        if (!first) {
+            const sep = document.createElement('div');
+            sep.className = 'eew-card-sep';
+            container.appendChild(sep);
+        }
+        container.appendChild(buildTwEewCard(data));
         first = false;
     }
     setLanguage(currentLanguage);
@@ -1860,28 +3430,51 @@ function formatJst(unixSec) {
 // ── Language toggle ───────────────────────────────────────────────────
 let currentLanguage = 'en';
 let lastQuakeData = [];
+let lastTwHistoryData = []; // Taiwan/CWA equivalent of lastQuakeData, fed by tw_history
 const wsQuakeBuffer = new Map(); // quake_time (unix seconds) → ws entry
+
+// Small 3-way translation helper for strings built in JS (as opposed to the
+// static <span class="en">/.ja/.zh markup pattern used directly in HTML/
+// generated HTML, which the CSS lang-attribute rules handle on their own).
+function t(en, ja, zh) {
+    return currentLanguage === 'ja' ? ja : currentLanguage === 'zh' ? zh : en;
+}
 
 function setLanguage(lang) {
     currentLanguage = lang;
     document.documentElement.lang = lang;
     const boreholeRow = document.getElementById('sp-borehole-row');
-    if (boreholeRow) boreholeRow.title = lang === 'ja' ? '地中観測点' : 'Underground station';
+    if (boreholeRow) boreholeRow.title = t('Underground station', '地中観測点', '井下觀測站');
     const mapKey = document.getElementById('map-key');
-    if (mapKey) mapKey.title = lang === 'ja' ? '凡例' : 'Map key';
+    if (mapKey) mapKey.title = t('Map key', '凡例', '圖例');
     renderSidebar(lastQuakeData);
-    // Follow the UI language for notifications unless the user has set an explicit override
+    // Follow the UI language for notifications unless the user has set an explicit
+    // override. Push notification content only exists in en/ja (see main.py's
+    // NTFY_TOPIC_*_EN/_JA and OneSignal 'warnings'/'warnings_ja' categories) - a
+    // zh UI has no zh notification category to switch to, so it falls back to en.
     if (!localStorage.getItem(NOTIF_LANG_KEY)) {
-        updateNotifLanguageUI(lang);
-        if (window.OneSignal) window.OneSignal.User.setLanguage(lang);
+        const notifLang = lang === 'zh' ? 'en' : lang;
+        updateNotifLanguageUI(notifLang);
+        if (window.OneSignal) window.OneSignal.User.setLanguage(notifLang);
     }
+    updateMapKey();
+    renderRegionPanel();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    setLanguage(window.__WEBQUAKE_LANG === 'ja' ? 'ja' : 'en');
+    document.getElementById('tog-live-regions').checked = liveRegionColouring;
+    setLanguage(window.__WEBQUAKE_LANG === 'ja' ? 'ja' : window.__WEBQUAKE_LANG === 'zh' ? 'zh' : 'en');
+    updateDataSourceFilterUI();
+    updateSidebarFilterUI();
+    reapplyDataSourceFilter();
     loadTimelineMarkersAndGaps();
     // Fallback only — new quakes/tsunamis trigger an immediate refresh themselves (see displayData).
     if (!_timelineRefreshTimer) _timelineRefreshTimer = setInterval(loadTimelineMarkersAndGaps, 300000);
+    const panelResize = new ResizeObserver(positionObsPanel);
+    for (const id of ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
+    const labelResize = new ResizeObserver(scheduleRegionMapLabels);
+    for (const element of document.querySelectorAll('#settings-popup,#timeline-panel,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control')) labelResize.observe(element);
+    document.getElementById('quake-sidebar').addEventListener('transitionend', scheduleRegionMapLabels);
 });
 
 // ── WebSocket ─────────────────────────────────────────────────────────
@@ -1899,18 +3492,18 @@ function updateConnectionStatus(text, bg) {
 function monitorConnection() {
     const age = Date.now() - lastMessageTime;
     if (age < 1500) {
-        updateConnectionStatus(currentLanguage === 'ja' ? '接続中' : 'Connected', '#8f8');
+        updateConnectionStatus(t('Connected', '接続中', '已連線'), '#8f8');
     } else if (age < 5000) {
-        updateConnectionStatus(currentLanguage === 'ja' ? '不安定' : 'Unstable', '#ff8');
+        updateConnectionStatus(t('Unstable', '不安定', '不穩定'), '#ff8');
     } else {
-        updateConnectionStatus(currentLanguage === 'ja' ? '切断' : 'Disconnected', '#f44');
+        updateConnectionStatus(t('Disconnected', '切断', '已斷線'), '#f44');
     }
 }
 setInterval(monitorConnection, 1000);
 
 function createWebSocket() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    updateConnectionStatus('Connecting…', '#555');
+    updateConnectionStatus(t('Connecting…', '接続しています…', '連線中…'), '#555');
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const socket = new WebSocket(`${proto}://${location.host}/ws`);
@@ -1922,7 +3515,7 @@ function createWebSocket() {
     socket.addEventListener('open', () => {
         lastMessageTime = Date.now();
         connectionAttempts = 0;
-        updateConnectionStatus('Connected', '#8f8');
+        updateConnectionStatus(t('Connected', '接続中', '已連線'), '#8f8');
     });
 
     socket.addEventListener('error', e => console.error('WS error', e));
@@ -1931,7 +3524,7 @@ function createWebSocket() {
         clearInterval(pingInterval);
         connectionAttempts++;
         const delay = Math.min(1000 * connectionAttempts, 30000);
-        updateConnectionStatus(`Reconnecting… (${connectionAttempts})`, '#f80');
+        updateConnectionStatus(t(`Reconnecting… (${connectionAttempts})`, `再接続しています… (${connectionAttempts})`, `重新連線中…（${connectionAttempts}）`), '#f80');
         reconnectTimer = setTimeout(createWebSocket, delay);
     });
 
@@ -1951,8 +3544,22 @@ function createWebSocket() {
         } else if (data.type === 'snet_stations_diff') {
             (data.removed || []).forEach(code => liveSnetCache.delete(code));
             (data.stations || []).forEach(s => liveSnetCache.set(s.code, s));
+        } else if (data.type === 'exptech_stations') {
+            liveTwStationCache.clear();
+            data.stations.forEach(s => liveTwStationCache.set(s.code, s));
+        } else if (data.type === 'exptech_stations_diff') {
+            (data.removed || []).forEach(code => liveTwStationCache.delete(code));
+            (data.stations || []).forEach(s => liveTwStationCache.set(s.code, s));
         } else if (data.type === 'jma_history') {
             liveQuakeHistory = data.quakes;
+        } else if (data.type === 'tw_history') {
+            liveTwQuakeHistory = data.quakes;
+        } else if (data.type === 'earthquake' && data.last_report !== undefined) {
+            const key = eewEventKey(data);
+            liveEewCache.set(key, liveEewCache.get(key)?.warning ? {...data, warning: true} : data);
+        } else if (data.type === 'eew_clear') {
+            if (data.key === undefined) liveEewCache.clear();
+            else liveEewCache.delete(data.key);
         }
         if (replayActive) {
             replayLiveBuffer.push(data);
@@ -1984,6 +3591,8 @@ function toggleQuakeSidebar() {
     btn.textContent = quakeSidebarCollapsed ? '◀' : '▶';
     const leafletRight = document.querySelector('.leaflet-bottom.leaflet-right');
     if (leafletRight) leafletRight.style.right = quakeSidebarCollapsed ? '0' : '262px';
+    positionRegionPopup();
+    scheduleRegionMapLabels();
 }
 
 // Collapses the quake history sidebar after a map/replay action on mobile,
@@ -2041,8 +3650,10 @@ function addWsQuakeToSidebar(data) {
         max_int:    data.max_int    ?? existing.max_int    ?? '0',
         magnitude:  data.magnitude  ?? existing.magnitude  ?? null,
         depth:      data.depth      ?? existing.depth      ?? null,
+        is_volcanic: data.is_volcanic ?? existing.is_volcanic ?? false,
         loc_en:     (data.epi_location_en && data.epi_location_en[0]) || existing.loc_en || null,
         loc_jp:     (data.epi_location_jp && data.epi_location_jp[0]) || existing.loc_jp || null,
+        matched_tw: data.matched_tw ?? existing.matched_tw ?? null,
     });
     renderSidebar(lastQuakeData);
 }
@@ -2061,24 +3672,30 @@ function formatCttTime(ctt) {
     return `${ctt.slice(8, 10)}:${ctt.slice(10, 12)}`;
 }
 
-function jmaDetailUrl(ctt, isJa) {
-    return `https://www.data.jma.go.jp/multi/quake/quake_detail.html?eventID=${ctt}&lang=${isJa ? 'jp' : 'en'}`;
+// JMA has no Chinese site - zh mode reuses the Japanese page (useJp), same as
+// it reuses the Japanese place name below rather than showing an English one.
+function jmaDetailUrl(ctt, useJp) {
+    return `https://www.data.jma.go.jp/multi/quake/quake_detail.html?eventID=${ctt}&lang=${useJp ? 'jp' : 'en'}`;
 }
 
 // Normalizes a JMA history entry or a WS buffer entry into a common shape so
 // per-field provenance (which source contributed the currently-displayed value)
 // can be tracked when several reports describe the same earthquake.
-function normalizeJmaCandidate(q, isJa) {
+function normalizeJmaCandidate(q, useJp) {
     return {
         kind: 'jma', ctt: q.ctt,
         intensity: (q.maxi && q.maxi !== '0') ? q.maxi : null,
         depth: parseQuakeDepth(q.cod),
         mag: q.mag ?? null,
         is_volcanic: !!q.is_volcanic,
-        loc: (isJa ? q.anm : (q.en_anm || '').replace(/ Prefecture/gi, '').replace(/ Pref\./gi, '')) || q.anm || null,
+        // No Chinese translation table exists for JMA's ~200 region/prefecture
+        // codes (would mirror eng_codes.py) - zh mode uses the native Japanese
+        // kanji name instead of English, since it's the actual place name
+        // (mutually legible to Chinese readers) rather than a guess at one.
+        loc: (useJp ? q.anm : (q.en_anm || '').replace(/ Prefecture/gi, '').replace(/ Pref\./gi, '')) || q.anm || null,
         at: q.at,
         lat: null, lon: null,
-        url: jmaDetailUrl(q.ctt, isJa),
+        url: jmaDetailUrl(q.ctt, useJp),
     };
 }
 function normalizeWsCandidate(ws) {
@@ -2088,7 +3705,7 @@ function normalizeWsCandidate(ws) {
         depth: ws.depth ?? null,
         mag: ws.magnitude ?? null,
         is_volcanic: !!ws.is_volcanic,
-        loc: (currentLanguage === 'ja' ? ws.loc_jp : ws.loc_en) || null,
+        loc: (currentLanguage !== 'en' ? ws.loc_jp : ws.loc_en) || null,
         at: ws.quake_time ? new Date(ws.quake_time * 1000).toISOString() : null,
         lat: ws.lat ?? null, lon: ws.lon ?? null,
         url: null,
@@ -2103,26 +3720,29 @@ function pickField(priorityList, key) {
 
 function renderSidebar(quakes) {
     const list = document.getElementById('quake-sidebar-list');
-    const isJa = currentLanguage === 'ja';
     list.innerHTML = '';
 
-    const unknownTip  = isJa ? 'JMAがまだ詳細情報を公表していません。' : 'Detailed info not released (yet) by JMA.';
-    const wqTip       = isJa ? '公式情報。JMAデータより先に情報を受信したWebQuakeが発信した速報です。' : 'Official report originated from WebQuake as info was received before JMA data.';
-    const wqjmaTip    = isJa ? 'JMAの速報とWebQuakeのデータを統合した情報です。JMAの情報が速報のため、欠損フィールドはWebQuakeで補完されています。' : 'JMA report combined with WebQuake data, as JMA report is preliminary.';
+    const unknownTip  = t('Detailed info not released (yet) by JMA.', 'JMAがまだ詳細情報を公表していません。', '氣象廳（JMA）尚未公布詳細資訊。');
+    const wqTip       = t('Official report originated from WebQuake as info was received before JMA data.', '公式情報。JMAデータより先に情報を受信したWebQuakeが発信した速報です。', '官方資訊。因WebQuake先於JMA資料收到消息而發出的速報。');
+    const wqjmaTip    = t('JMA report combined with WebQuake data, as JMA report is preliminary.', 'JMAの速報とWebQuakeのデータを統合した情報です。JMAの情報が速報のため、欠損フィールドはWebQuakeで補完されています。', 'JMA速報與WebQuake資料整合而成的資訊。因JMA資訊為初步速報，缺漏欄位由WebQuake補足。');
     const fieldLabels = {
-        intensity: isJa ? '最大震度' : 'Max intensity',
-        depth:     isJa ? '深さ'     : 'Depth',
-        mag:       isJa ? 'マグニチュード' : 'Magnitude',
-        loc:       isJa ? '震源地'   : 'Location',
+        intensity: t('Max intensity', '最大震度', '最大震度'),
+        depth:     t('Depth', '深さ', '深度'),
+        mag:       t('Magnitude', 'マグニチュード', '規模'),
+        loc:       t('Location', '震源地', '震央位置'),
     };
-    const wqStaticLabel = isJa ? 'WebQuake（速報データ）' : 'WebQuake (live telegram data)';
-    const sourcesTitle  = isJa ? '情報の出典' : 'Data sources';
+    const wqStaticLabel = t('WebQuake (live telegram data)', 'WebQuake（速報データ）', 'WebQuake（即時電文資料）');
+    const sourcesTitle  = t('Data sources', '情報の出典', '資料來源');
+
+    const sidebarFilter = effectiveSidebarFilter();
+    const renderItems = []; // { ts, el } — sorted newest-first before being appended
 
     // Cluster each WS (live telegram) entry with every JMA history entry that
     // describes the same earthquake (matched by event_id or within 90 s of origin time).
     // Unmatched JMA entries form their own single-candidate cluster.
     const usedJmaIdx = new Set();
     const clusters = [];
+    if (sidebarFilter !== 'tw') {
     for (const [wsKey, ws] of wsQuakeBuffer) {
         const jmaIdxs = [];
         quakes.forEach((q, idx) => {
@@ -2139,13 +3759,11 @@ function renderSidebar(quakes) {
         clusters.push({ ws: null, jmaIdxs: [idx], ts });
     });
 
-    const renderItems = []; // { ts, el } — sorted newest-first before being appended
-
     clusters.forEach(cluster => {
         // JMA candidates take priority over WS, and among themselves the most recently
         // issued report (highest ctt, a YYYYMMDDHHMMSS string) wins ties for a given field.
         const jmaCandidates = cluster.jmaIdxs
-            .map(idx => normalizeJmaCandidate(quakes[idx], isJa))
+            .map(idx => normalizeJmaCandidate(quakes[idx], currentLanguage !== 'en'))
             .sort((a, b) => String(b.ctt || '').localeCompare(String(a.ctt || '')));
         const wsCandidate = cluster.ws ? normalizeWsCandidate(cluster.ws) : null;
         const priorityList = wsCandidate ? [...jmaCandidates, wsCandidate] : jmaCandidates;
@@ -2174,7 +3792,7 @@ function renderSidebar(quakes) {
         const bg    = intColor(maxi);
         const fg    = intTextColor(maxi);
         const loc   = fLoc.value || '–';
-        const t     = atSource && atSource.at ? formatQuakeTime(atSource.at) : '–';
+        const timeStr = atSource && atSource.at ? formatQuakeTime(atSource.at) : '–';
         const mag   = fMag.value;
         const depth = fDepth.value;
         const depthLabel = fieldLabels.depth;
@@ -2183,7 +3801,7 @@ function renderSidebar(quakes) {
             ? `&ensp;${depthLabel}: <b>${depth} km</b>`
             : mag != null ? `&ensp;<span title="${unknownTip}">${depthLabel}: <b>?</b></span>` : '';
         const magStr = isVolcanic
-            ? `<b>${isJa ? '火山噴火' : 'Volcanic Eruption'}</b>`
+            ? `<b>${t('Volcanic Eruption', '火山噴火', '火山噴發')}</b>`
             : mag != null
                 ? `<b>M ${mag}</b>${depthPart}`
                 : `<span title="${unknownTip}">–</span>`;
@@ -2216,12 +3834,16 @@ function renderSidebar(quakes) {
         let jmaBtnHtml = '';
         let jmaPopoverHtml = '';
         if (jmaSources.length === 1) {
-            jmaBtnHtml = `<a class="quake-jma-btn" href="${jmaSources[0].url}" target="_blank" rel="noopener noreferrer" title="Open on JMA website">JMA ↗</a>`;
+            jmaBtnHtml = `<a class="quake-jma-btn" href="${jmaSources[0].url}" target="_blank" rel="noopener noreferrer" title="${t('Open on JMA website', 'JMAのウェブサイトで開く', '在JMA網站開啟')}">JMA ↗</a>`;
         } else if (jmaSources.length > 1 || (hasJma && hasWs)) {
             const popoverItems = sources.map(s => {
                 if (s.kind === 'jma') {
                     const timeLabel = formatCttTime(s.ctt);
-                    const reportLabel = isJa ? `JMA速報${timeLabel ? ` (${timeLabel})` : ''} ↗` : `JMA report${timeLabel ? ` (${timeLabel})` : ''} ↗`;
+                    const reportLabel = t(
+                        `JMA report${timeLabel ? ` (${timeLabel})` : ''} ↗`,
+                        `JMA速報${timeLabel ? ` (${timeLabel})` : ''} ↗`,
+                        `JMA報告${timeLabel ? ` (${timeLabel})` : ''} ↗`
+                    );
                     return `<a class="quake-jma-popover-item" href="${s.url}" target="_blank" rel="noopener noreferrer">${s.fields.join(', ')} — ${reportLabel}</a>`;
                 }
                 return `<div class="quake-jma-popover-item quake-jma-popover-static">${s.fields.join(', ')} — ${wqStaticLabel}</div>`;
@@ -2230,13 +3852,26 @@ function renderSidebar(quakes) {
             jmaPopoverHtml = `<div class="quake-jma-popover hidden"><div class="quake-jma-popover-title">${sourcesTitle}</div>${popoverItems}</div>`;
         }
 
+        // Backend-confirmed match (JMA hypocenter code 900/901 + haversine/
+        // time match against a CWA report, see _find_matching_tw_report) -
+        // a small secondary note rather than a competing card/marker (that's
+        // suppressed on the map side, see the 'earthquake' displayData
+        // handler), since CWA's report is the primary one for this event.
+        const matchedTw = cluster.ws && cluster.ws.matched_tw;
+        const matchedTwTip = t('Also felt in Taiwan', 'この地震は台湾でも観測されました', '此地震在台灣也有觀測到');
+        const matchedTwHtml = matchedTw
+            ? (matchedTw.web
+                ? `<a class="quake-jma-btn" href="${matchedTw.web}" target="_blank" rel="noopener noreferrer" title="${matchedTwTip}">CWA ↗</a>`
+                : `<span class="quake-source quake-source-cwa" title="${matchedTwTip}">CWA</span>`)
+            : '';
+
         const mapPin = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="13" viewBox="0 0 11 13" fill="currentColor"><path d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.38 4.5 8.5 4.5 8.5s4.5-5.12 4.5-8.5C10 2.02 7.98 0 5.5 0zm0 6.1a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/></svg>';
         const mapBtnHtml = mapTs
-            ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? 'Hide on map' : 'Show on map'}">${mapActive ? '✕' : mapPin}</button>`
+            ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? t('Hide on map', '地図から隠す', '從地圖隱藏') : t('Show on map', '地図に表示', '在地圖顯示')}">${mapActive ? '✕' : mapPin}</button>`
             : '';
         const replayIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="11" viewBox="0 0 10 11" fill="currentColor"><path d="M0 0l10 5.5L0 11z"/></svg>';
         const replayBtnHtml = replayMarker
-            ? `<button class="quake-replay-btn" title="${isJa ? 'リプレイで確認' : 'View in replay'}">${replayIcon}</button>`
+            ? `<button class="quake-replay-btn" title="${t('View in replay', 'リプレイで確認', '在重播中檢視')}">${replayIcon}</button>`
             : '';
 
         a.innerHTML =
@@ -2244,12 +3879,12 @@ function renderSidebar(quakes) {
             `<div class="quake-info">` +
             `<div class="quake-location" title="${loc}">${loc}</div>` +
             `<div class="quake-time">` +
-            `<span>${t}</span>` +
+            `<span>${timeStr}</span>` +
             `<div class="quake-time-btns">` + mapBtnHtml + replayBtnHtml + `</div>` +
             `</div>` +
             `<div class="quake-mag">` +
             `<span>${magStr}</span>` +
-            `<div class="quake-source-row">` + sourceLabel + jmaBtnHtml + `</div>` +
+            `<div class="quake-source-row">` + sourceLabel + jmaBtnHtml + matchedTwHtml + `</div>` +
             `</div>` +
             jmaPopoverHtml +
             `</div>`;
@@ -2287,6 +3922,13 @@ function renderSidebar(quakes) {
 
         renderItems.push({ ts: cluster.ts, el: a });
     });
+    } // sidebarFilter !== 'tw'
+
+    if (sidebarFilter !== 'jp') {
+        lastTwHistoryData.forEach(q => {
+            renderItems.push({ ts: q.ts, el: buildTwHistoryEntry(q) });
+        });
+    }
 
     renderItems.sort((a, b) => b.ts - a.ts);
     renderItems.forEach(({ el }) => list.appendChild(el));
@@ -2295,6 +3937,123 @@ function renderSidebar(quakes) {
 function renderQuakeHistory(quakes) {
     lastQuakeData = quakes;
     renderSidebar(quakes);
+}
+
+// Taiwan/CWA sidebar entry - much simpler than buildEewCard's JMA equivalent
+// above: CWA publishes each report once (no revision staging to cluster/merge
+// like JMA's VXSE51->52->53 + live-telegram blending), and tw_history entries
+// already carry lat/lon directly, so "view on map" is a plain flyTo rather
+// than the replay/station-reconstruction machinery handleJmaMapBtn needs.
+// Keyed by earthquake_no (not ts) - ts is only origin-time precision (seconds)
+// and isn't guaranteed unique the way a JMA event_id string effectively is,
+// so ts was the wrong identity for this toggle.
+let twSidebarActiveKey = null;
+
+function handleTwMapBtn(q) {
+    if (twSidebarActiveKey === q.earthquake_no) {
+        twSidebarActiveKey = null;
+        clearTwPtsStations();
+        removeEpicenterMark('tw:pts');
+        if (liveStationsHidden) {
+            liveStationsHidden = false;
+            document.getElementById('obs-live-hidden').style.display = 'none';
+            renderRegionColors();
+            redrawStations();
+            redrawTwStations();
+        }
+        renderSidebar(lastQuakeData);
+        map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
+        return;
+    }
+    twSidebarActiveKey = q.earthquake_no;
+    renderSidebar(lastQuakeData);
+    if (q.lat != null && q.lon != null) {
+        placeMarker('tw:pts', q.lat, q.lon);
+        map.flyTo([q.lat, q.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
+    }
+    // CWA reports carry a full per-station intensity list - show it, hiding
+    // live station dots the same way viewing a JMA past quake already does,
+    // so the map reads as "this report's snapshot" rather than mixing in
+    // whatever's currently live. Same banner JMA's equivalent view shows,
+    // explaining why the live dots disappeared.
+    liveStationsHidden = true;
+    renderRegionColors();
+    document.getElementById('obs-live-hidden').style.display = 'block';
+    document.getElementById('obs-panel').classList.add('visible');
+    positionObsPanel();
+    redrawStations();
+    redrawTwStations();
+    fetchTwPoints(q.earthquake_no);
+    if (_twPtsClearTimer) clearTimeout(_twPtsClearTimer);
+    _twPtsClearTimer = setTimeout(() => {
+        _twPtsClearTimer = null;
+        if (twSidebarActiveKey === q.earthquake_no) {
+            twSidebarActiveKey = null;
+            clearTwPtsStations();
+            removeEpicenterMark('tw:pts');
+            liveStationsHidden = false;
+            document.getElementById('obs-live-hidden').style.display = 'none';
+            renderRegionColors();
+            redrawStations();
+            redrawTwStations();
+            renderSidebar(lastQuakeData);
+            map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
+        }
+    }, 180000);
+}
+
+function buildTwHistoryEntry(q) {
+    const maxi = q.max_int || '0';
+    const badge = maxi === '0' ? '?' : maxi;
+    const bg = intColor(maxi);
+    const fg = intTextColor(maxi);
+    const loc = (currentLanguage === 'zh' && q.location_zh) ? q.location_zh : (q.location || '–');
+    const timeStr = q.ts ? formatQuakeTime(new Date(q.ts * 1000).toISOString()) : '–';
+    const depthLabel = t('Depth', '深さ', '深度');
+    const depthPart = q.depth != null ? `&ensp;${depthLabel}: <b>${q.depth} km</b>` : '';
+    const magStr = q.magnitude != null ? `<b>M ${q.magnitude}</b>${depthPart}` : '<span>–</span>';
+    const badgeHtml = badge === '?'
+        ? `<div class="quake-int-badge" style="background:${bg};color:${fg}" title="${t('Detailed info not released (yet) by CWA.', 'CWAが詳細情報を公表していません。', 'CWA尚未公布詳細資訊。')}">${badge}</div>`
+        : `<div class="quake-int-badge" style="background:${bg};color:${fg}">${badge}</div>`;
+
+    const a = document.createElement('a');
+    const isActive = activeTwQuakeData && activeTwQuakeData.earthquake_no === q.earthquake_no;
+    a.className = 'quake-entry quake-entry-tw' + (isActive ? ' quake-entry-active' : '');
+
+    const cwaBtnHtml = q.web
+        ? `<a class="quake-jma-btn" href="${q.web}" target="_blank" rel="noopener noreferrer" title="${t('Open on CWA website', 'CWAのウェブサイトで開く', '在CWA網站開啟')}">CWA ↗</a>`
+        : `<span class="quake-source quake-source-cwa">CWA</span>`;
+
+    const mapPin = '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="13" viewBox="0 0 11 13" fill="currentColor"><path d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.38 4.5 8.5 4.5 8.5s4.5-5.12 4.5-8.5C10 2.02 7.98 0 5.5 0zm0 6.1a1.6 1.6 0 1 1 0-3.2 1.6 1.6 0 0 1 0 3.2z"/></svg>';
+    const hasCoords = q.lat != null && q.lon != null;
+    const mapActive = hasCoords && twSidebarActiveKey === q.earthquake_no;
+    const mapBtnHtml = hasCoords
+        ? `<button class="quake-map-btn${mapActive ? ' active' : ''}" title="${mapActive ? t('Hide on map', '地図から隠す', '從地圖隱藏') : t('Show on map', '地図に表示', '在地圖顯示')}">${mapActive ? '✕' : mapPin}</button>`
+        : '';
+
+    a.innerHTML =
+        badgeHtml +
+        `<div class="quake-info">` +
+        `<div class="quake-location" title="${loc}">${loc}</div>` +
+        `<div class="quake-time">` +
+        `<span>${timeStr}</span>` +
+        `<div class="quake-time-btns">` + mapBtnHtml + `</div>` +
+        `</div>` +
+        `<div class="quake-mag">` +
+        `<span>${magStr}</span>` +
+        `<div class="quake-source-row">` + cwaBtnHtml + `</div>` +
+        `</div>` +
+        `</div>`;
+
+    if (hasCoords) {
+        a.querySelector('.quake-map-btn').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); handleTwMapBtn(q); collapseSidebarOnMobile(); });
+        a.addEventListener('click', e => {
+            if (e.target.closest('.quake-jma-btn') || e.target.closest('.quake-map-btn')) return;
+            handleTwMapBtn(q);
+            collapseSidebarOnMobile();
+        });
+    }
+    return a;
 }
 
 
@@ -2325,19 +4084,11 @@ function clearEewDisplay(key) {
     }
     clearWaveAnimation();
     if (!hasPastQuakeData) {
-        resetRegionColors();
         ryukyuEpicentre = false;
         zoomAfterClear();
     }
     renderEewPanels();
-    if (!liveStationsHidden) {
-        document.getElementById('obs-panel').classList.remove('visible');
-    }
-    document.getElementById('obs-pga-box').style.display   = 'none';
-    document.getElementById('obs-pga-label').style.display = 'none';
-    niedZoomActive = false;
-    niedZoomCoords = null;
-    ryukyuStations = false;
+    refreshNiedSpatialState();
     redrawStations();
 }
 
@@ -2386,6 +4137,14 @@ function displayData(data) {
         applySnetDiff(data.stations, data.removed);
         return;
     }
+    if (data.type === 'exptech_stations') {
+        updateTwStations(data.stations);
+        return;
+    }
+    if (data.type === 'exptech_stations_diff') {
+        applyTwStationsDiff(data.stations, data.removed);
+        return;
+    }
     if (data.type === 'pswaves') {
         return; // now computed client-side
     }
@@ -2403,7 +4162,7 @@ function displayData(data) {
         removeEpicenterMark('__past__');
         clearJmaStations();
         renderSidebar(lastQuakeData);
-        resetRegionColors();
+        clearReportRegionColors();
         zoomAfterClear();
         return;
     }
@@ -2413,8 +4172,7 @@ function displayData(data) {
     if (data.type === 'earthquake' && data.last_report !== undefined) {
         hasPastQuakeData = false;
         if (jmaSidebarActiveTs !== null || liveStationsHidden) { clearJmaStations(); renderSidebar(lastQuakeData); }
-        const eewOrigin = data.origin_time ?? data.quake_time ?? null;
-        const key = data.event_id || String(eewOrigin ?? data.report_time ?? Date.now());
+        const key = eewEventKey(data);
         if (!seenEewOrigins.has(key)) {
             seenEewOrigins.add(key);
             if (!muteEewAlert) playSound(sndNewQuake);
@@ -2430,9 +4188,6 @@ function displayData(data) {
                 const depthKm = parseFloat(data.depth) || 10;
                 startWaveAnimation(key, data.lat, data.lon, depthKm, waveOriginTime);
             }
-        }
-        if (data.area_intensities && data.area_intensities.length) {
-            updateRegionColors(data.area_intensities);
         }
         if (data.max_int && data.max_int !== '0') loadTimelineMarkersAndGaps();
     } else if (data.type === 'earthquake') {
@@ -2467,12 +4222,16 @@ function displayData(data) {
         addWsQuakeToSidebar(data);
         // Always resync region colours to this past quake's own report (or clear
         // them if it has none) so a prior EEW's shading doesn't linger.
-        if (activePastQuakeAreaIntensities) {
-            updateRegionColors(activePastQuakeAreaIntensities);
-        } else {
-            resetRegionColors();
-        }
-        if (data.lat != null && data.lon != null) {
+        showReportRegionColors(activePastQuakeAreaIntensities || []);
+        // A backend-confirmed match against a CWA report (hypocenter code
+        // 900/901, see _find_matching_tw_report) means this JMA report and an
+        // active Taiwan report describe the same physical event - CWA's own
+        // marker/flyTo is the primary one for it, so this side doesn't place
+        // a second competing marker. The sidebar entry still gets a "also
+        // reported by CWA" note (see renderSidebar/matched_tw).
+        if (data.matched_tw) {
+            removeEpicenterMark('__past__');
+        } else if (data.lat != null && data.lon != null) {
             placeMarker('__past__', data.lat, data.lon);
             if (isRyukyuCoord(data.lat, data.lon)) {
                 ryukyuEpicentre = true;
@@ -2494,6 +4253,10 @@ function displayData(data) {
                     const resp = await fetch(`/api/quake_points_near/${_ts}`);
                     if (!resp.ok) return;
                     const body = await resp.json();
+                    // A newer EEW or a different selected report supersedes
+                    // this request; its late response must not repaint that view.
+                    if (!hasPastQuakeData || activePastQuakeTime !== _ts || !liveStationsHidden ||
+                            (jmaSidebarActiveTs != null && jmaSidebarActiveTs !== _ts)) return;
                     if (!body.stations || !body.stations.length) return;
                     setJmaStations(body.stations);
                     jmaStationsEventId = `near:${_ts}`;
@@ -2504,7 +4267,7 @@ function displayData(data) {
                     redrawJmaStations();
                     if (!activePastQuakeAreaIntensities) {
                         const computed = computeRegionIntensitiesFromStations(jmaStations);
-                        if (computed.length) updateRegionColors(computed);
+                        showReportRegionColors(computed);
                     }
                     renderSidebar(lastQuakeData);
                     if (!(_lat != null && isRyukyuCoord(_lat, _lon)) && !hasRyukyuActivity()) {
@@ -2539,6 +4302,53 @@ function displayData(data) {
         activeTsunamiObs = null;
         clearOffshoreObsRegions();
         renderTsunamiCard();
+    } else if (data.type === 'tw_earthquake') {
+        // Taiwan/CWA post-event report. Never rendered in the live #eew-panel
+        // (see renderEewPanels) - CWA reports are always finalized/historical,
+        // never "in progress" the way EEW is, so they don't belong in a
+        // live-status panel. Only the epicenter marker (own dedicated key, so
+        // a concurrent JMA past-quake marker '__past__' is never overwritten)
+        // + click popup, region coloring, and the sidebar history entry
+        // represent it.
+        activeTwQuakeData = data;
+        if (data.stations && data.stations.length) {
+            updateTwRegionColors(computeTwRegionIntensitiesFromStations(data.stations));
+        } else {
+            resetTwRegionColors();
+        }
+        if (data.lat != null && data.lon != null) {
+            placeMarker('__tw_past__', data.lat, data.lon);
+            if (showTaiwan() && !hasRyukyuActivity()) {
+                map.flyTo([data.lat, data.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
+            }
+        }
+    } else if (data.type === 'tw_past_quake_clear') {
+        activeTwQuakeData = null;
+        dismissTwQuakePopup();
+        removeEpicenterMark('__tw_past__');
+        resetTwRegionColors();
+    } else if (data.type === 'tw_eew') {
+        // Live Taiwan EEW, sourced from ExpTech's eq/eew feed (CWA has no public
+        // live push — see plan notes). Schema fields (author/serial/eq.{time,loc,
+        // lat,lon,mag,depth,max}) confirmed from ExpTech's own live production
+        // code, not guessed — see the eq.lat/eq.lon caveat in buildTwEewCard's
+        // caller: if a payload omits them, the marker/wave just don't render.
+        const key = String(data.id ?? data.serial ?? Date.now());
+        activeTwEews.set(key, data);
+        renderEewPanels();
+        placeAllTwEewEpicenters();
+        const eq = data.eq || {};
+        if (eq.lat != null && eq.lon != null) {
+            startWaveAnimation('tw:' + key, eq.lat, eq.lon, parseFloat(eq.depth) || 10, eq.time != null ? eq.time / 1000 : Date.now() / 1000);
+            if (showTaiwan() && !hasRyukyuActivity()) {
+                map.flyTo([eq.lat, eq.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
+            }
+        }
+    } else if (data.type === 'tw_eew_clear') {
+        clearTwEewDisplay(data.key);
+    } else if (data.type === 'tw_history') {
+        lastTwHistoryData = data.quakes;
+        renderSidebar(lastQuakeData);
     }
 }
 
@@ -2605,7 +4415,7 @@ function resetToNeutralState() {
     pastQuakeStationsShown = false;
     removeEpicenterMark('__past__');
     clearJmaStations();
-    resetRegionColors();
+    clearReportRegionColors();
     activeTsunamiData = null;
     activeTsunamiObs = null;
     clearTsunamiCoastlines();
@@ -2664,7 +4474,11 @@ async function jumpReplayTo(ts) {
     updateTimelineUI();
     // Only snapshot on the initial jump into replay — later jumps within an
     // already-active replay must not overwrite the snapshot with polluted data.
-    if (!replayActive) liveWsQuakeBuffer = new Map(wsQuakeBuffer);
+    if (!replayActive) {
+        liveWsQuakeBuffer = new Map(wsQuakeBuffer);
+        liveEewCache.clear();
+        for (const [key, data] of activeEews) liveEewCache.set(key, data);
+    }
     replayActive = true;
     replayClock = ts;
     replayClockAnchorMs = Date.now();
@@ -2676,6 +4490,7 @@ async function jumpReplayTo(ts) {
     // otherwise the map looks empty until a station happens to report a change.
     updateStations([...liveStationCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
     updateSnetStations([...liveSnetCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
+    updateTwStations([...liveTwStationCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
     // Fetch the reconstructed state and a small initial playback buffer in
     // parallel. Only block on a 90s buffer so playback can start almost
     // immediately; the rest is prefetched in the background below.
@@ -2738,14 +4553,26 @@ function exitReplay() {
     // Replay playback overwrites lastQuakeData/wsQuakeBuffer with historical
     // snapshots; restore the true live state before re-rendering the sidebar.
     if (liveQuakeHistory !== null) lastQuakeData = liveQuakeHistory;
+    if (liveTwQuakeHistory !== null) lastTwHistoryData = liveTwQuakeHistory;
     if (liveWsQuakeBuffer !== null) { wsQuakeBuffer.clear(); liveWsQuakeBuffer.forEach((v, k) => wsQuakeBuffer.set(k, v)); }
     liveWsQuakeBuffer = null;
     resetToNeutralState();
+    // EEWs already active before replay may have no messages in the buffer.
+    // Restore their latest live revisions without sounding another alert.
+    for (const [key, data] of liveEewCache) {
+        activeEews.set(key, data);
+        if (data.lat != null && data.lon != null && !data.is_plum) {
+            startWaveAnimation(key, data.lat, data.lon, parseFloat(data.depth) || 10, data.origin_time ?? data.quake_time);
+        }
+    }
+    renderEewPanels();
+    placeAllEpicenters();
     buffered.forEach(displayData);
     // Buffered nied/snet messages may be diffs-only, leaving unchanged
     // stations missing — restore the full live snapshot to be sure.
     updateStations([...liveStationCache.values()]);
     updateSnetStations([...liveSnetCache.values()]);
+    updateTwStations([...liveTwStationCache.values()]);
     updateTimelineUI();
     closeTimelinePanel();
     map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
@@ -2955,7 +4782,7 @@ function updateTimelineUI() {
         liveBtn.classList.add('tl-replaying');
     } else {
         slider.value = now;
-        label.textContent = currentLanguage === 'ja' ? 'ライブ' : 'Live';
+        label.textContent = t('Live', 'ライブ', '即時');
         setTimelinePlayPauseIcon(replayLoading ? 'loading' : 'play');
         liveBtn.classList.remove('tl-replaying');
     }

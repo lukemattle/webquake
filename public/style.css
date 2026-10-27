@@ -26,6 +26,7 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
 .eew-lpgm-val { font-size: 1.6em; font-weight: 700; line-height: 1; }
 .eew-location { font-size: 1em; font-weight: 600; margin-bottom: 2px; }
 .eew-detail { font-size: 0.8em; color: #ccc; }
+.eew-region-status { font-size: 0.72em; color: #bbb; margin-top: 4px; }
 .eew-time { font-size: 0.75em; color: #999; margin-top: 2px; }
 .eew-card-sep { border-top: 1px solid rgba(255,255,255,0.15); margin: 10px 0; }
 
@@ -47,6 +48,61 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     margin-top: 4px; line-height: 1;
 }
 
+/* Regional comparison panel and the explicitly selected region's callout. */
+#regions-panel {
+    position: absolute; left: 10px; z-index: 999; width: 300px;
+    max-width: calc(100vw - 20px); max-height: 240px;
+    background: rgba(0,0,0,0.88); color: #fff; border-radius: 6px;
+    display: flex; flex-direction: column; overflow: hidden;
+}
+#regions-panel[hidden], #region-popup[hidden] { display: none; }
+body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; pointer-events: auto; }
+#regions-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%; flex-shrink: 0;
+    border: 0; background: none; color: #ddd; cursor: pointer;
+    padding: 8px 10px; font: 600 0.78em Roboto, sans-serif; text-align: left;
+}
+#regions-count { color: #999; font-weight: 400; }
+#regions-chevron { margin-left: auto; }
+#regions-content { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+#regions-content[hidden] { display: none; }
+#regions-panel table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#regions-panel th { padding: 4px; color: #aaa; font-size: 0.63em; font-weight: 400; }
+#regions-panel th:first-child { width: 45%; text-align: left; padding-left: 10px; }
+#regions-panel th:last-child { width: 30px; }
+#regions-panel td { padding: 4px; text-align: center; border-top: 1px solid #292929; }
+#regions-panel td:first-child { padding-left: 10px; text-align: left; }
+.region-select, .region-locate {
+    border: 0; background: none; color: #ddd; font: inherit; cursor: pointer;
+}
+.region-select { display: block; width: 100%; padding: 3px 0; text-align: left; font-size: 0.72em; overflow-wrap: anywhere; }
+.region-locate { padding: 5px 3px; font-size: 1em; }
+#regions-panel tr.region-selected { background: rgba(160,216,239,0.16); }
+.region-select:focus-visible, .region-locate:focus-visible, #regions-toggle:focus-visible { outline: 2px solid #a0d8ef; outline-offset: -1px; }
+.region-intensity { display: inline-block; min-width: 28px; border-radius: 3px; padding: 3px 4px; font-size: 0.82em; font-weight: 700; }
+.regions-note { color: #999; font-size: 0.63em; line-height: 1.4; padding: 5px 10px 8px; margin: 0; }
+.region-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+#region-popup {
+    position: absolute; z-index: 950; width: 240px; padding: 10px;
+    border: 1px solid #a0d8ef; border-radius: 5px; color: #fff;
+    background: rgba(20,20,20,0.96); box-shadow: 0 2px 12px #0008;
+    font-size: 0.78em; overflow-y: auto;
+}
+#region-popup-name { font-weight: 600; padding-right: 18px; margin-bottom: 8px; overflow-wrap: anywhere; }
+#region-popup .sp-close { position: absolute; top: 7px; right: 7px; border: 0; background: none; color: #aaa; cursor: pointer; padding: 0 3px; font-size: 1.1em; }
+.region-popup-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+#region-popup-events, #region-popup-note { color: #aaa; font-size: 0.85em; line-height: 1.4; margin-top: 6px; overflow-wrap: anywhere; }
+#region-map-labels { position: absolute; inset: 0; z-index: 460; pointer-events: none; }
+.region-map-label {
+    position: absolute; top: 0; left: 0; padding: 3px 5px;
+    border: 1px solid #aaa; border-radius: 4px; background: rgba(15,15,15,0.92);
+    color: #eee; font-size: 11px; line-height: 16px; white-space: nowrap;
+}
+.region-map-label-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.region-map-label-row + .region-map-label-row { margin-top: 2px; }
+.region-map-label-live > span { text-decoration: underline dashed; text-underline-offset: 3px; }
+.region-map-label .region-intensity { min-width: 22px; padding: 0 3px; font-size: 11px; }
+
 #bottom-bar {
     position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
     background: rgba(0,0,0,0.75); padding: 6px 12px;
@@ -67,8 +123,11 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
 #quake-sidebar-header {
     padding: 7px 10px 7px 12px; font-size: 0.75em; color: #888;
     border-bottom: 1px solid #2a2a2a; display: flex; align-items: center;
+    justify-content: space-between; gap: 6px;
     flex-shrink: 0; white-space: nowrap; overflow: hidden;
 }
+.quake-sidebar-title { overflow: hidden; text-overflow: ellipsis; }
+#quake-sidebar-header .lang-seg-btn { padding: 2px 6px; font-size: 0.95em; }
 #quake-sidebar-toggle {
     position: absolute; top: 6px; right: 258px; z-index: 1002;
     background: rgba(15,15,15,0.93); border: none; border-right: none; color: #aaa;
@@ -85,6 +144,12 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     text-decoration: none; color: inherit; cursor: pointer;
 }
 .quake-entry:hover { background: rgba(255,255,255,0.05); }
+/* Taiwan/CWA entries get a teal accent stripe (matching the ExpTech/TREM-Net
+   badge color used elsewhere) so they're distinguishable at a glance in
+   "Both" mode without needing extra width in an already-compact card. Rule
+   order matters here: .quake-entry-active must come after so its amber
+   accent wins when a TW entry is also the active one. */
+.quake-entry-tw { box-shadow: inset 3px 0 0 rgba(45,212,191,0.6); }
 .quake-entry-active { background: rgba(255,200,50,0.08); box-shadow: inset 3px 0 0 #f5a623; }
 .quake-entry:first-child .quake-info { padding-top: 10px; }
 .quake-int-badge {
@@ -115,9 +180,15 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     font-size: 0.6em; font-weight: 700; letter-spacing: 0.06em; opacity: 0.8;
     padding: 1px 3px;
 }
-.quake-source-ws    { color: #4a9eff; }
-.quake-source-jma   { color: #666; }
-.quake-source-wqjma { color: #a78bfa; }
+.quake-source-ws      { color: #4a9eff; }
+.quake-source-jma     { color: #666; }
+.quake-source-wqjma   { color: #a78bfa; }
+/* Two distinct badges, not one "Taiwan" tag — ExpTech's live station feed is
+   its own community sensor network (TREM-Net), not an official CWA source;
+   CWA's own earthquake reports are official. Mislabeling ExpTech data as CWA
+   would misattribute a community network as a government one. */
+.quake-source-exptech { color: #2dd4bf; }
+.quake-source-cwa     { color: #f59e0b; }
 .quake-map-btn {
     flex-shrink: 0;
     background: rgba(255,255,255,0.07); border: none; color: #777;
@@ -182,7 +253,7 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 }
 #jst-time { color: #ddd; }
 #discord-btn { margin-left: auto; }
-#x-btn { margin-left: 4px; }
+#x-btn, #github-btn { margin-left: 4px; }
 #bottom-title { position: absolute; left: 50%; transform: translateX(-50%); font-size: 0.95em; color: #aaa; pointer-events: none; }
 #bottom-version { color: #666; }
 .bar-btn {
@@ -262,29 +333,33 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 .ntfy-topic-row .ntfy-btn { flex-shrink: 0; padding: 4px 10px; }
 
 /* hide language variants based on document language */
-html[lang="en"] .ja { display: none; }
-html[lang="ja"] .en { display: none; }
+html[lang="en"] .ja, html[lang="en"] .zh { display: none; }
+html[lang="ja"] .en, html[lang="ja"] .zh { display: none; }
+html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
 
-/* ── Station click popup ── */
-#station-popup {
+/* ── Station click popup (also shared by the Taiwan epicenter popup) ── */
+#station-popup, #tw-quake-popup {
     position: absolute; z-index: 900; pointer-events: all;
     background: rgba(30,30,30,0.92); border: 1px solid rgba(255,255,255,0.15);
     border-radius: 4px; padding: 6px 10px 6px 8px;
     color: #fff; font-size: 0.82em; white-space: nowrap;
     display: none; transform: translate(-50%, calc(-100% - 10px));
 }
-#station-popup .sp-name { font-weight: 600; margin-bottom: 3px; }
-#station-popup .sp-int { display: flex; align-items: center; gap: 6px; }
+#station-popup .sp-name-row, #tw-quake-popup .sp-name-row { display: flex; align-items: baseline; gap: 5px; margin-bottom: 3px; }
+#station-popup .sp-name, #tw-quake-popup .sp-name { font-weight: 600; }
+#station-popup .sp-int, #tw-quake-popup .sp-int { display: flex; align-items: center; gap: 6px; }
 #station-popup .sp-int-bar {
     display: inline-block; width: 4px; height: 14px; border-radius: 1px;
 }
-#station-popup .sp-close {
+#station-popup .sp-close, #tw-quake-popup .sp-close {
     position: absolute; top: 3px; right: 5px;
     background: none; border: none; color: #aaa; cursor: pointer;
     font-size: 0.9em; line-height: 1; padding: 0;
 }
-#station-popup .sp-close:hover { color: #fff; }
+#station-popup .sp-close:hover, #tw-quake-popup .sp-close:hover { color: #fff; }
 #station-popup .sp-pga { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+#tw-quake-popup .twp-row { margin-top: 2px; color: #ccc; }
+#tw-quake-popup .twp-row b { color: #fff; }
 #obs-pga-label { font-size: 0.7em; color: #aaa; margin-top: 4px; }
 #obs-pga-box {
     border-radius: 4px; padding: 3px 8px;
@@ -351,7 +426,7 @@ html[lang="ja"] .en { display: none; }
     position: absolute; bottom: 40px; left: 10px; z-index: 998;
     background: rgba(0,0,0,0.82); border-radius: 6px;
     padding: 6px 10px; pointer-events: auto; cursor: help;
-    flex-direction: column; gap: 3px; display: none;
+    flex-direction: column; gap: 3px; display: none; overflow-y: auto; overscroll-behavior: contain;
 }
 #map-key.visible { display: flex; }
 .key-section + .key-section {
@@ -369,6 +444,9 @@ html[lang="ja"] .en { display: none; }
     font-weight: 700; font-size: 0.95em; flex-shrink: 0;
 }
 .key-label { color: #ddd; white-space: nowrap; }
+.key-region-swatch { width: 26px; height: 18px; border-radius: 3px; flex-shrink: 0; }
+.key-region-live { background: rgba(160,216,239,0.30); border: 1.2px dashed #a0d8ef; }
+.key-region-eew { background: rgba(160,216,239,0.78); border: 1px solid #111; }
 @keyframes eew-epicentre-flash {
     0%, 50% { opacity: 1; }
     50.01%, 100% { opacity: 0; }

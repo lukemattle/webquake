@@ -1,3 +1,4 @@
+import env_loader  # noqa: F401 - loads .env into os.environ before config is read
 import websocket
 import httpx
 import json
