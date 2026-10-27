@@ -59,3 +59,4 @@ v0.13.1: add lpgm info to live quakes
 
 v1.0.0: WebQuake stable release
 v1.0.1: fix volcanic eruptions showing as quakes with unknown info
+v1.1: major release - see https://github.com/lukemattle/webquake/releases/tag/v1.1
