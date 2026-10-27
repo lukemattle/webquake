@@ -583,11 +583,9 @@ function reapplyDataSourceFilter() {
     if (activeTsunamiData) drawTsunamiCoastlines(activeTsunamiData); else clearTsunamiCoastlines();
     if (activeTsunamiObs) drawOffshoreObsRegions(activeTsunamiObs); else clearOffshoreObsRegions();
     renderTsunamiCard();
-    // The NIED max-intensity/PGA box only updates on the next live station
-    // message, which could be a while off if the socket is otherwise idle —
-    // force-hide it immediately rather than leaving stale JMA-only numbers
-    // on screen in Taiwan-only mode.
-    if (!showJapan()) document.getElementById('obs-panel').classList.remove('visible');
+    // Restore the filtered live summary immediately when Japan is shown again,
+    // without waiting for another station diff.
+    refreshNiedSpatialState();
     // #station-popup is shared between NIED/S-net and ExpTech stations (see
     // showStationPopup's 'source' param) with no cheap way to tell which
     // country a currently-open one belongs to, so any filter change just
@@ -767,6 +765,79 @@ function computeRegionIntensitiesFromStations(stations) {
     return Object.entries(maxByCode).map(([code, max_int]) => ({ code, max_int }));
 }
 
+// Keep location knowledge separate from current readings: a missing station
+// must not make its neighbours easier to accept. Reuse this catalogue across
+// snapshots and replay seeks; rebuild cached neighbours only as locations change.
+class NiedSpatialFilter {
+    constructor() {
+        this.locations = new Map();
+        this.neighbours = new Map();
+        this.regionCodes = new Map();
+        this.regionGeometry = null;
+    }
+
+    stationKey(station) {
+        return station.code ?? `${station.lat},${station.lon}`;
+    }
+
+    evaluate(stations) {
+        const current = new Map();
+        let locationsChanged = false;
+        for (const station of stations) {
+            if (!Number.isFinite(station.lat) || !Number.isFinite(station.lon) ||
+                    Math.abs(station.lat) > 90 || Math.abs(station.lon) > 180) continue;
+            const key = this.stationKey(station);
+            current.set(key, station);
+            const known = this.locations.get(key);
+            if (!known || known.lat !== station.lat || known.lng !== station.lon) {
+                this.locations.set(key, L.latLng(station.lat, station.lon));
+                this.regionCodes.delete(key);
+                locationsChanged = true;
+            }
+        }
+        if (locationsChanged) this.neighbours.clear();
+        if (this.regionGeometry !== _regionFeatureBounds) {
+            this.regionGeometry = _regionFeatureBounds;
+            this.regionCodes.clear();
+        }
+
+        const acceptedStations = [];
+        const maxByRegion = new Map();
+        for (const [key, station] of current) {
+            if (intRank(station.int) < 1) continue;
+            if (!this.neighbours.has(key)) {
+                const point = this.locations.get(key);
+                const nearby = [];
+                for (const [otherKey, otherPoint] of this.locations) {
+                    if (key === otherKey) continue;
+                    const distance = point.distanceTo(otherPoint);
+                    if (distance <= 50000) nearby.push({ key: otherKey, distance });
+                }
+                nearby.sort((a, b) => a.distance - b.distance || String(a.key).localeCompare(String(b.key)));
+                this.neighbours.set(key, nearby.slice(0, 6).map(neighbour => neighbour.key));
+            }
+            const neighbours = this.neighbours.get(key);
+            if (!neighbours.length) continue;
+            const supporters = neighbours.filter(otherKey => intRank(current.get(otherKey)?.int) >= 1).length;
+            if (supporters < Math.ceil(neighbours.length / 2)) continue;
+            acceptedStations.push(station);
+
+            if (!_regionFeatureBounds) continue;
+            if (!this.regionCodes.has(key)) {
+                this.regionCodes.set(key, findRegionCodeForPoint(station.lat, station.lon));
+            }
+            const code = this.regionCodes.get(key);
+            if (code != null && intRank(station.int) > intRank(maxByRegion.get(String(code)))) {
+                maxByRegion.set(String(code), station.int);
+            }
+        }
+        return {
+            acceptedStations,
+            areaIntensities: [...maxByRegion].map(([code, max_int]) => ({ code, max_int }))
+        };
+    }
+}
+
 // ── Taiwan region coloring (county/city, from taiwan-regions.geojson) ──
 // CWA reports don't come with a JMA-style per-region-code area_intensities
 // array — they only give per-station readings — so unlike Japan, station
@@ -844,6 +915,7 @@ fetch('japan-regions.geojson')
         // Loads async — if the user already switched to Taiwan-only before
         // this resolved, the layer would otherwise appear regardless.
         if (!showJapan()) map.removeLayer(regionLayer);
+        refreshNiedSpatialState();
     });
 
 fetch('tsunami-regions.geojson')
@@ -1022,6 +1094,9 @@ function updateMapKey() {
 
 // ── NIED station dots (canvas overlay) ───────────────────────────────
 let lastStations = [];
+const niedSpatialFilter = new NiedSpatialFilter();
+let supportedNiedStations = [];
+let liveNiedAreaIntensities = [];
 // Pre-split/sorted views of lastStations, recomputed only when the data
 // changes (in updateStations) rather than on every redraw — redraws also
 // fire on every map move frame, where re-sorting would be wasted work.
@@ -1821,19 +1896,8 @@ map.getContainer().addEventListener('click', function(e) {
     }
 });
 
-function getNiedActiveCoords(stations) {
-    const high = stations.filter(st => intRank(st.int) >= 2);
-    if (high.length > 0) return high.map(st => [st.lat, st.lon]);
-    const int1 = stations.filter(st => st.int === '1');
-    const clustered = new Set();
-    for (let i = 0; i < int1.length; i++) {
-        for (let j = i + 1; j < int1.length; j++) {
-            const dlat = int1[i].lat - int1[j].lat;
-            const dlon = int1[i].lon - int1[j].lon;
-            if (Math.hypot(dlat, dlon) < 0.45) { clustered.add(i); clustered.add(j); }
-        }
-    }
-    return clustered.size >= 2 ? [...clustered].map(i => [int1[i].lat, int1[i].lon]) : null;
+function getNiedActiveCoords() {
+    return supportedNiedStations.length ? supportedNiedStations.map(st => [st.lat, st.lon]) : null;
 }
 
 function zoomToNiedStations() {
@@ -1846,7 +1910,7 @@ function zoomToNiedStations() {
 }
 
 function zoomAfterClear() {
-    const niedCoords = getNiedActiveCoords(lastStations);
+    const niedCoords = getNiedActiveCoords();
     if (niedCoords && niedCoords.length > 0 && !ryukyuStations && epicenterMarks.size === 0) {
         niedZoomActive = true;
         niedZoomCoords = niedCoords;
@@ -1889,24 +1953,14 @@ function _setStationData(stations) {
             showStationPopup(st, pt.x, pt.y);
         }
     }
-    let maxInt = null;
     let maxPga = null;
     stations.forEach(st => {
-        if (intRank(st.int) > intRank(maxInt)) maxInt = st.int;
         if (st.pga != null && (maxPga == null || st.pga > maxPga)) maxPga = st.pga;
     });
     if (!replayActive) {
         _niedEverReceived = true;
         _niedLog.push({time: Date.now(), hasPga: maxPga !== null});
         _evalNiedWarning();
-    }
-    if (maxInt) {
-        const box = document.getElementById('obs-int-box');
-        box.textContent = maxInt;
-        box.style.background = intColor(maxInt);
-        box.style.color = intTextColor(maxInt);
-        document.getElementById('obs-panel').classList.add('visible');
-        positionObsPanel();
     }
     const pgaBox   = document.getElementById('obs-pga-box');
     const pgaLabel = document.getElementById('obs-pga-label');
@@ -1920,11 +1974,32 @@ function _setStationData(stations) {
         pgaBox.style.display   = 'none';
         pgaLabel.style.display = 'none';
     }
+    refreshNiedSpatialState();
+}
 
+function refreshNiedSpatialState() {
+    const result = niedSpatialFilter.evaluate(lastStations);
+    supportedNiedStations = result.acceptedStations;
+    liveNiedAreaIntensities = result.areaIntensities;
+    let maxInt = null;
+    for (const station of supportedNiedStations) {
+        if (intRank(station.int) > intRank(maxInt)) maxInt = station.int;
+    }
+    // Zero means all available readings are quiet. An unsupported positive
+    // reading is unknown, not proof of zero shaking; never leave an old peak.
+    if (!maxInt && lastStations.length && lastStations.every(st => intRank(st.int) === 0)) maxInt = '0';
+    const box = document.getElementById('obs-int-box');
+    box.textContent = maxInt ?? '—';
+    box.style.background = intColor(maxInt);
+    box.style.color = intTextColor(maxInt);
+    box.title = maxInt == null
+        ? t('No spatially supported intensity of 1 or above', '周辺観測点で確認できる震度1以上の揺れなし', '沒有獲鄰近觀測站支持的震度1以上資料')
+        : t('Current live maximum after checking nearby surface stations', '周辺の地表観測点で確認した現在の最大震度の目安', '經鄰近地表觀測站確認的目前最大震度估計');
+    document.getElementById('obs-panel').classList.toggle('visible', showJapan() && (lastStations.length > 0 || liveStationsHidden));
+    positionObsPanel();
+    if (!showJapan()) return;
     const hadRyukyuStations = ryukyuStations;
-    ryukyuStations = stations.some(st =>
-        st.int && st.int !== '0' && isRyukyuCoord(st.lat, st.lon)
-    );
+    ryukyuStations = supportedNiedStations.some(st => isRyukyuCoord(st.lat, st.lon));
     if (ryukyuStations && !hadRyukyuStations && epicenterMarks.size === 0) {
         if (jmaSidebarActiveTs !== null) { clearJmaStations(); renderSidebar(lastQuakeData); }
         map.flyTo(RYUKYU_CENTER, RYUKYU_ZOOM, { animate: true, duration: 1 });
@@ -1933,7 +2008,7 @@ function _setStationData(stations) {
     }
 
     const hadNiedZoom = niedZoomActive;
-    const niedCoords = getNiedActiveCoords(stations);
+    const niedCoords = getNiedActiveCoords();
     niedZoomActive = !!(niedCoords && niedCoords.length > 0);
     if (niedZoomActive) niedZoomCoords = niedCoords;
 
