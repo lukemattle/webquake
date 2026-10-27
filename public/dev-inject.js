@@ -341,6 +341,51 @@ window.testEew = function(warning = false, lpgm = 0) {
     console.log('[test] EEW injected —', warning ? 'Warning' : 'Forecast', lpgm ? `(LPGM class ${lpgm})` : '');
 };
 
+// Reusing the event ID sends a revision. Try testNiedSpatial(3, '3'), then
+// testRegionEew(); testRegionEew(false) restores live colours in that region.
+// Use a second ID for overlap; displayData({type:'eew_clear', key: ID}) clears it.
+window.testRegionEew = function(withRegions = true, eventId = 'DEV-REGIONS-A', intensity = '5-', regionCode = '350') {
+    displayData(_eewBase({
+        event_id: eventId, max_int: intensity, magnitude: 5.5, depth: 20,
+        epi_location_en: ['Tokyo'], epi_location_jp: ['東京都'],
+        lat: 35.7, lon: 139.7,
+        area_intensities: withRegions ? [{code: regionCode, max_int: intensity}] : []
+    }));
+    console.log(`[test] ${eventId}: ${withRegions ? `regional forecast ${intensity}` : 'no regional forecast'}`);
+};
+
+window.testEewRegionAggregation = function() {
+    let checks = 0;
+    const check = (condition, description) => {
+        if (!condition) throw new Error(`[EEW regions] ${description}`);
+        checks++;
+    };
+    const events = new Map([
+        ['A', {area_intensities: [{code: '350', max_int: '3'}, {code: '351', max_int: '2'}]}],
+        ['B', {area_intensities: [{code: '350', max_int: '5-'}]}],
+        ['C', {area_intensities: [{code: '350', max_int: '5-'}]}],
+        ['no-regions', {max_int: '7'}]
+    ]);
+    let regions = aggregateEewRegions(events);
+    check(regions.get('350').max_int === '5-', 'highest overlapping forecast wins');
+    check(JSON.stringify(regions.get('350').eventIds) === '["B","C"]', 'equal highest forecasts retain both event IDs');
+    check(regions.get('351').max_int === '2', 'non-overlapping forecast is preserved');
+    check(!hasRegionalForecast(events.get('no-regions')), 'overall maximum is not a regional forecast');
+    check(hasRegionalForecast({area_intensities: [{code: '350', max_int: '0'}]}), 'a regional forecast of zero is available');
+    events.delete('B');
+    regions = aggregateEewRegions(events);
+    check(regions.get('350').max_int === '5-' && regions.get('350').eventIds[0] === 'C', 'cancelled event is removed from attribution');
+    events.delete('C');
+    check(aggregateEewRegions(events).get('350').max_int === '3', 'remaining lower forecast is restored');
+    events.set('A', {area_intensities: [{code: '350', max_int: '1'}]});
+    regions = aggregateEewRegions(events);
+    check(regions.get('350').max_int === '1' && !regions.has('351'), 'revision replaces previous forecast regions and intensity');
+    events.set('A', {max_int: '7', area_intensities: []});
+    check(aggregateEewRegions(events).size === 0, 'revision without regional forecasts clears previous shading');
+    console.log(`[test] EEW region aggregation: ${checks} checks passed`);
+    return checks;
+};
+
 window.testPlum = function() {
     displayData(_eewBase({
         is_plum: true,
@@ -517,4 +562,4 @@ console.log(
     '%c WebQuake dev injector ready ',
     'background:#1a1a1a;color:#8f8;padding:4px 8px;border-radius:3px'
 );
-console.log('testAll() | testNied() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
+console.log('testAll() | testNied() | testNiedGradient() | testNiedSpatial() | testNiedSpatial(3) | testNiedSpatialFilter() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testRegionEew() | testRegionEew(false) | testEewRegionAggregation() | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');

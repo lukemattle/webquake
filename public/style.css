@@ -26,6 +26,7 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
 .eew-lpgm-val { font-size: 1.6em; font-weight: 700; line-height: 1; }
 .eew-location { font-size: 1em; font-weight: 600; margin-bottom: 2px; }
 .eew-detail { font-size: 0.8em; color: #ccc; }
+.eew-region-status { font-size: 0.72em; color: #bbb; margin-top: 4px; }
 .eew-time { font-size: 0.75em; color: #999; margin-top: 2px; }
 .eew-card-sep { border-top: 1px solid rgba(255,255,255,0.15); margin: 10px 0; }
 
@@ -388,6 +389,9 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     font-weight: 700; font-size: 0.95em; flex-shrink: 0;
 }
 .key-label { color: #ddd; white-space: nowrap; }
+.key-region-swatch { width: 26px; height: 18px; border-radius: 3px; flex-shrink: 0; }
+.key-region-live { background: rgba(160,216,239,0.30); border: 1.2px dashed #a0d8ef; }
+.key-region-eew { background: rgba(160,216,239,0.78); border: 1px solid #111; }
 @keyframes eew-epicentre-flash {
     0%, 50% { opacity: 1; }
     50.01%, 100% { opacity: 0; }
