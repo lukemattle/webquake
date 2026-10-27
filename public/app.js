@@ -1076,13 +1076,12 @@ function redrawStations() {
 
     const z    = map.getZoom();
     const base = Math.max(6, Math.min(20, Math.round(z * 2 - 2)));
-    const zeroDiam = Math.max(4, base - 3);
+    const diam = Math.max(4, base - 3);
 
     // Draw zero/null dots first (background layer), then active dots sorted
     // ascending by intensity. Both groups are precomputed in updateStations.
     for (const [group, isZero] of [[_zeroStations, true], [_activeStations, false]]) {
         group.forEach(st => {
-            const diam   = isZero ? zeroDiam : base;
             const pt     = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
             // Skip dots outside the viewport — when zoomed in (i.e. during an
             // actual quake) most of the ~2000 stations are off-screen.
