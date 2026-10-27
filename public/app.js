@@ -1500,6 +1500,7 @@ function positionRegionPopup() {
     const width = popup.offsetWidth, height = popup.offsetHeight;
     popup.style.left = Math.max(space.left, Math.min(point.x + 12, space.right - width)) + 'px';
     popup.style.top = Math.max(space.top, Math.min(point.y - height - 12, space.bottom - height)) + 'px';
+    scheduleRegionMapLabels();
 }
 
 function handleRegionMapClick(x, y) {
@@ -1518,6 +1519,221 @@ document.getElementById('regions-list').addEventListener('click', event => {
     else selectRegion(row.dataset.regionCode);
 });
 map.on('move zoom resize', positionRegionPopup);
+
+// ── Collision-filtered regional map labels ────────────────────────────
+const REGION_LABEL_GAP = 6;
+const regionLabelShapeCache = new Map();
+let placedRegionLabels = [];
+let _regionLabelRedrawPending = false;
+const regionLabelLayer = document.createElement('div');
+regionLabelLayer.id = 'region-map-labels';
+map.getContainer().appendChild(regionLabelLayer);
+
+function regionLabelRectsOverlap(a, b, gap = REGION_LABEL_GAP) {
+    return a.left - gap < b.right && a.right + gap > b.left &&
+        a.top - gap < b.bottom && a.bottom + gap > b.top;
+}
+
+function regionLabelSegmentHitsRect(a, b, rect) {
+    let start = 0, end = 1;
+    for (const [axis, min, max] of [[0, rect.left, rect.right], [1, rect.top, rect.bottom]]) {
+        const delta = b[axis] - a[axis];
+        if (delta === 0) {
+            if (a[axis] < min || a[axis] > max) return false;
+        } else {
+            const first = (min - a[axis]) / delta, last = (max - a[axis]) / delta;
+            start = Math.max(start, Math.min(first, last));
+            end = Math.min(end, Math.max(first, last));
+            if (start > end) return false;
+        }
+    }
+    return true;
+}
+
+function regionLabelRectFits(rect, polygon) {
+    const corners = [[rect.left, rect.top], [rect.right, rect.top], [rect.right, rect.bottom], [rect.left, rect.bottom]];
+    if (!corners.every(([x, y]) => _pointInPolygonCoords(x, y, polygon))) return false;
+    // Corner checks alone miss a concavity cutting through the box, or a hole
+    // enclosed by it. No polygon boundary may intersect the rectangle either.
+    for (const ring of polygon) {
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            if (regionLabelSegmentHitsRect(ring[j], ring[i], rect)) return false;
+        }
+    }
+    return true;
+}
+
+function regionLabelPolygonArea(polygon) {
+    return polygon.reduce((area, ring, index) => {
+        let sum = 0;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            sum += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+        }
+        return area + (index === 0 ? 1 : -1) * Math.abs(sum / 2);
+    }, 0);
+}
+
+function regionLabelAnchor(polygon) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of polygon[0]) {
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+    }
+    let cell = Math.max(maxX - minX, maxY - minY) / 16;
+    if (!cell) return null;
+    let best = null;
+    // Mirrors the backend map's iterative interior-grid search, including holes.
+    for (let pass = 0; pass < 6; pass++) {
+        let distance = -1, next = null;
+        for (let x = minX; x <= maxX; x += cell) for (let y = minY; y <= maxY; y += cell) {
+            if (!_pointInPolygonCoords(x, y, polygon)) continue;
+            let nearest = Infinity;
+            for (const ring of polygon) for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const a = ring[j], b = ring[i], dx = b[0] - a[0], dy = b[1] - a[1];
+                const fraction = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+                nearest = Math.min(nearest, Math.hypot(x - a[0] - fraction * dx, y - a[1] - fraction * dy));
+            }
+            if (nearest > distance) { distance = nearest; next = [x, y]; }
+        }
+        if (next) {
+            best = next;
+            minX = next[0] - cell; maxX = next[0] + cell;
+            minY = next[1] - cell; maxY = next[1] + cell;
+        }
+        cell /= 3;
+    }
+    return best;
+}
+
+function getRegionLabelShape(code) {
+    const geometry = regionLayersByCode.get(code)?.feature.geometry;
+    if (!geometry) return null;
+    if (regionLabelShapeCache.get(code)?.geometry === geometry) return regionLabelShapeCache.get(code);
+    const polygons = geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates];
+    let polygon = null, largest = -1;
+    for (const coordinates of polygons) {
+        const projected = coordinates.map(ring => ring.map(([lon, lat]) => {
+            const point = map.project([lat, lon], 0);
+            return [point.x, point.y];
+        }));
+        const area = regionLabelPolygonArea(projected);
+        if (area > largest) { largest = area; polygon = projected; }
+    }
+    const shape = {geometry, polygon, anchor: polygon ? regionLabelAnchor(polygon) : null};
+    regionLabelShapeCache.set(code, shape);
+    return shape;
+}
+
+function regionLabelObstacles() {
+    const obstacles = [], size = map.getSize(), zoom = map.getZoom();
+    const mapRect = map.getContainer().getBoundingClientRect();
+    const selectors = '#eew-panel,#obs-panel,#regions-panel,#tsunami-panel,#map-key,#quake-sidebar,#quake-sidebar-toggle,#bottom-bar,#timeline-panel,#settings-popup,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control,.leaflet-marker-icon';
+    for (const element of [...document.querySelectorAll(selectors), ...epicenterLayer.children]) {
+        if (!element.getClientRects().length) continue;
+        const rect = element.getBoundingClientRect();
+        if (rect.width && rect.height) obstacles.push({left: rect.left - mapRect.left, top: rect.top - mapRect.top, right: rect.right - mapRect.left, bottom: rect.bottom - mapRect.top});
+    }
+    const addStations = (stations, radius) => {
+        for (const station of stations) {
+            const point = map.latLngToContainerPoint(station._ll || [station.lat, station.lon]);
+            const r = typeof radius === 'function' ? radius(station) : radius;
+            if (point.x + r < 0 || point.y + r < 0 || point.x - r > size.x || point.y - r > size.y) continue;
+            obstacles.push({left: point.x - r, top: point.y - r, right: point.x + r, bottom: point.y + r});
+        }
+    };
+    const base = Math.max(6, Math.min(20, Math.round(zoom * 2 - 2)));
+    if (showJapan() && !liveStationsHidden) {
+        addStations(lastStations, Math.max(4, base - 3) / 2 + 0.5);
+        if (snetVisible) addStations(lastSnetStations, Math.max(5, Math.min(16, Math.round(zoom * 2 - 3))) / 2 + 0.5);
+    }
+    if (showTaiwan() && !liveStationsHidden) {
+        addStations(lastTwStations, station => (station.int === '0' || station.int == null ? Math.max(4, base - 3) : base) / 2 + 0.5);
+    }
+    const reportRadius = Math.max(7, Math.min(22, Math.round(zoom * 2))) / 2 + 1;
+    if (showJapan() && jmaStationsVisible) addStations(jmaStations, reportRadius);
+    if (showTaiwan() && twPtsStationsVisible) addStations(twPtsStations, reportRadius);
+    return obstacles;
+}
+
+function clearRegionMapLabels() {
+    if (regionLabelLayer.childElementCount) regionLabelLayer.replaceChildren();
+    placedRegionLabels = [];
+}
+
+function scheduleRegionMapLabels() {
+    if (mapIsMoving || map._animatingZoom) { clearRegionMapLabels(); return; }
+    if (_regionLabelRedrawPending) return;
+    _regionLabelRedrawPending = true;
+    requestAnimationFrame(() => { _regionLabelRedrawPending = false; renderRegionMapLabels(); });
+}
+
+function renderRegionMapLabels() {
+    clearRegionMapLabels();
+    if (map.getZoom() < 8 || mapIsMoving || map._animatingZoom || !showJapan() || liveStationsHidden || reportRegionViewActive) return;
+    const candidates = regionRows.map(row => ({...row, live: liveRegionColouring ? row.live : null}))
+        .filter(row => (row.live != null || row.forecast != null) && map.getBounds().intersects(regionLayersByCode.get(row.code).getBounds()))
+        .sort((a, b) => Math.max(intRank(b.live), intRank(b.forecast)) - Math.max(intRank(a.live), intRank(a.forecast)) || a.code.localeCompare(b.code));
+    const fragment = document.createDocumentFragment();
+    for (const row of candidates) {
+        const element = document.createElement('div');
+        element.className = 'region-map-label';
+        element.dataset.regionCode = row.code;
+        element.setAttribute('role', 'img');
+        const description = [regionDisplayName(row.code)];
+        for (const [source, value, text] of [['live', row.live, t('Live', '現在', '即時')], ['eew', row.forecast, 'EEW']]) {
+            if (value == null) continue;
+            const line = document.createElement('div');
+            line.className = `region-map-label-row region-map-label-${source}`;
+            const label = document.createElement('span');
+            label.textContent = text;
+            const badge = document.createElement('b');
+            setRegionIntensityBadge(badge, value, source);
+            line.append(label, badge);
+            element.appendChild(line);
+            description.push(`${text} ${value}`);
+        }
+        element.setAttribute('aria-label', description.join(' · '));
+        row.element = element;
+        fragment.appendChild(element);
+    }
+    regionLabelLayer.style.visibility = 'hidden';
+    regionLabelLayer.appendChild(fragment);
+    // Measure together before positioning so a row update needs one layout pass.
+    for (const row of candidates) { row.width = row.element.offsetWidth; row.height = row.element.offsetHeight; }
+    const obstacles = regionLabelObstacles(), size = map.getSize();
+    const scale = map.getZoomScale(map.getZoom(), 0);
+    const origin = map.project(map.containerPointToLatLng([0, 0]), 0);
+    for (const row of candidates) {
+        let placed = null;
+        const shape = placedRegionLabels.length < 12 ? getRegionLabelShape(row.code) : null;
+        if (shape?.anchor) {
+            const point = map.latLngToContainerPoint(map.unproject(shape.anchor, 0));
+            const dx = row.width / 2 + REGION_LABEL_GAP, dy = row.height / 2 + REGION_LABEL_GAP;
+            const offsets = [[0, 0]];
+            for (const step of [1, 2]) {
+                for (const [x, y] of [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]]) offsets.push([x * dx * step, y * dy * step]);
+            }
+            for (const [x, y] of offsets) {
+                const rect = {left: point.x + x - row.width / 2, top: point.y + y - row.height / 2, right: point.x + x + row.width / 2, bottom: point.y + y + row.height / 2};
+                if (rect.left < REGION_LABEL_GAP || rect.top < REGION_LABEL_GAP || rect.right > size.x - REGION_LABEL_GAP || rect.bottom > size.y - REGION_LABEL_GAP) continue;
+                if (obstacles.some(other => regionLabelRectsOverlap(rect, other))) continue;
+                const padded = {left: origin.x + (rect.left - REGION_LABEL_GAP) / scale, top: origin.y + (rect.top - REGION_LABEL_GAP) / scale, right: origin.x + (rect.right + REGION_LABEL_GAP) / scale, bottom: origin.y + (rect.bottom + REGION_LABEL_GAP) / scale};
+                if (!regionLabelRectFits(padded, shape.polygon)) continue;
+                placed = rect;
+                break;
+            }
+        }
+        if (placed) {
+            row.element.style.transform = `translate(${placed.left}px, ${placed.top}px)`;
+            placedRegionLabels.push({code: row.code, ...placed});
+            obstacles.push(placed);
+        } else row.element.remove();
+    }
+    regionLabelLayer.style.visibility = '';
+}
+
+map.on('movestart zoomstart', clearRegionMapLabels);
+map.on('moveend zoomend resize', scheduleRegionMapLabels);
 
 // ── Adaptive map key / legend ──────────────────────────────────────────
 // Shows intensity levels from 1 up to the highest currently shown on the
@@ -1764,6 +1980,7 @@ function toggleSnetVisible() {
     snetCanvas.style.display = snetVisible ? '' : 'none';
     const cb = document.getElementById('tog-snet');
     if (cb) cb.checked = snetVisible;
+    scheduleRegionMapLabels();
 }
 
 const snetCanvas = document.createElement('canvas');
@@ -1780,6 +1997,7 @@ function resizeSnetCanvas() {
 }
 
 function redrawSnetStations() {
+    scheduleRegionMapLabels();
     const sz  = map.getSize();
     const dpr = window.devicePixelRatio || 1;
     const ctx = snetCanvas.getContext('2d');
@@ -1866,6 +2084,7 @@ function resizeTwStationCanvas() {
 }
 
 function redrawTwStations() {
+    scheduleRegionMapLabels();
     const sz  = map.getSize();
     const dpr = window.devicePixelRatio || 1;
     const ctx = twStationCanvas.getContext('2d');
@@ -1973,6 +2192,7 @@ function resizeTwPtsCanvas() {
 }
 
 function redrawTwPtsStations() {
+    scheduleRegionMapLabels();
     const sz  = map.getSize();
     const dpr = window.devicePixelRatio || 1;
     const ctx = twPtsCanvas.getContext('2d');
@@ -2071,6 +2291,7 @@ function resizeJmaCanvas() {
 }
 
 function redrawJmaStations() {
+    scheduleRegionMapLabels();
     const sz  = map.getSize();
     const dpr = window.devicePixelRatio || 1;
     const ctx = jmaCanvas.getContext('2d');
@@ -2341,6 +2562,7 @@ function showStationPopup(st, px, py, source) {
     stationPopup.style.display = 'block';
     stationPopup.style.left = px + 'px';
     stationPopup.style.top  = py + 'px';
+    scheduleRegionMapLabels();
 }
 
 // Taiwan/CWA earthquake report popup — opened by clicking the '__tw_past__'
@@ -2363,6 +2585,7 @@ function showTwQuakePopup(px, py) {
     twQuakePopup.style.display = 'block';
     twQuakePopup.style.left = px + 'px';
     twQuakePopup.style.top  = py + 'px';
+    scheduleRegionMapLabels();
 }
 
 map.getContainer().addEventListener('click', function(e) {
@@ -3007,6 +3230,7 @@ function positionTsunamiPanel() {
     }
     positionMapKey();
     positionRegionPopup();
+    scheduleRegionMapLabels();
 }
 
 function positionRegionsPanel() {
@@ -3242,6 +3466,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!_timelineRefreshTimer) _timelineRefreshTimer = setInterval(loadTimelineMarkersAndGaps, 300000);
     const panelResize = new ResizeObserver(positionObsPanel);
     for (const id of ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
+    const labelResize = new ResizeObserver(scheduleRegionMapLabels);
+    for (const element of document.querySelectorAll('#settings-popup,#timeline-panel,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control')) labelResize.observe(element);
+    document.getElementById('quake-sidebar').addEventListener('transitionend', scheduleRegionMapLabels);
 });
 
 // ── WebSocket ─────────────────────────────────────────────────────────
@@ -3359,6 +3586,7 @@ function toggleQuakeSidebar() {
     const leafletRight = document.querySelector('.leaflet-bottom.leaflet-right');
     if (leafletRight) leafletRight.style.right = quakeSidebarCollapsed ? '0' : '262px';
     positionRegionPopup();
+    scheduleRegionMapLabels();
 }
 
 // Collapses the quake history sidebar after a map/replay action on mobile,

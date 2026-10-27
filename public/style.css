@@ -92,6 +92,16 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 #region-popup .sp-close { position: absolute; top: 7px; right: 7px; border: 0; background: none; color: #aaa; cursor: pointer; padding: 0 3px; font-size: 1.1em; }
 .region-popup-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
 #region-popup-events, #region-popup-note { color: #aaa; font-size: 0.85em; line-height: 1.4; margin-top: 6px; overflow-wrap: anywhere; }
+#region-map-labels { position: absolute; inset: 0; z-index: 460; pointer-events: none; }
+.region-map-label {
+    position: absolute; top: 0; left: 0; padding: 3px 5px;
+    border: 1px solid #aaa; border-radius: 4px; background: rgba(15,15,15,0.92);
+    color: #eee; font-size: 11px; line-height: 16px; white-space: nowrap;
+}
+.region-map-label-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.region-map-label-row + .region-map-label-row { margin-top: 2px; }
+.region-map-label-live > span { text-decoration: underline dashed; text-underline-offset: 3px; }
+.region-map-label .region-intensity { min-width: 22px; padding: 0 3px; font-size: 11px; }
 
 #bottom-bar {
     position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;

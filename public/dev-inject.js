@@ -367,6 +367,56 @@ window.testRegionPanel = function() {
     console.log('[test] Regions panel: Tokyo wards live 3 / EEW 5−; eastern Tama live 2 / no forecast');
 };
 
+window.testRegionLabels = function() {
+    testRegionPanel();
+    displayData(_eewBase({
+        event_id: 'DEV-LABELS', max_int: '5-',
+        epi_location_en: ['Label placement test'], epi_location_jp: ['ラベル表示テスト'],
+        area_intensities: [...regionLayersByCode.keys()].map(code => ({code, max_int: code === '350' ? '5-' : '3'}))
+    }));
+    clearRegionSelection();
+    map.stop();
+    map.setView([36, 137], 8, {animate: false});
+    console.log('[test] Regional labels: zoom below 8 to hide; pan/zoom, select a region, and toggle live colouring to check collision filtering');
+};
+
+window.testRegionLabelGeometry = function() {
+    let checks = 0;
+    const check = (condition, description) => {
+        if (!condition) throw new Error(`[Region labels] ${description}`);
+        checks++;
+    };
+    const square = [[[0,0],[20,0],[20,20],[0,20],[0,0]]];
+    const hole = [...square, [[8,8],[12,8],[12,12],[8,12],[8,8]]];
+    check(regionLabelRectFits({left: 2, top: 2, right: 6, bottom: 6}, square), 'interior rectangle fits');
+    check(!regionLabelRectFits({left: -1, top: 2, right: 6, bottom: 6}, square), 'rectangle extending outside is rejected');
+    check(!regionLabelRectFits({left: 6, top: 6, right: 14, bottom: 14}, hole), 'an enclosed hole is rejected even with all corners inside');
+    const concave = [[[0,0],[10,0],[10,10],[6,10],[6,4],[4,4],[4,10],[0,10],[0,0]]];
+    check(!regionLabelRectFits({left: 2, top: 2, right: 8, bottom: 8}, concave), 'concave boundary crossing is rejected');
+    const anchor = regionLabelAnchor(hole);
+    check(anchor && _pointInPolygonCoords(anchor[0], anchor[1], hole), 'interior anchor avoids holes');
+    check(regionLabelPolygonArea(hole) === 384, 'polygon area excludes holes');
+    const box = {left: 0, top: 0, right: 10, bottom: 10};
+    check(!regionLabelRectsOverlap(box, {left: 16, top: 0, right: 26, bottom: 10}), 'six-pixel separation is sufficient');
+    check(regionLabelRectsOverlap(box, {left: 15, top: 0, right: 25, bottom: 10}), 'less than six pixels is rejected');
+    const code = '__label_geometry_test__';
+    try {
+        regionLayersByCode.set(code, {feature: {geometry: {type: 'MultiPolygon', coordinates: [
+            [[[130,30],[130.1,30],[130.1,30.1],[130,30.1],[130,30]]],
+            [[[134,34],[136,34],[136,36],[134,36],[134,34]]]
+        ]}}});
+        const shape = getRegionLabelShape(code);
+        const point = map.unproject(shape.anchor, 0);
+        check(point.lat > 34 && point.lat < 36 && point.lng > 134 && point.lng < 136, 'largest component provides the anchor');
+        check(getRegionLabelShape(code) === shape, 'unchanged geometry reuses the cached anchor');
+    } finally {
+        regionLayersByCode.delete(code);
+        regionLabelShapeCache.delete(code);
+    }
+    console.log(`[test] Region label geometry: ${checks} checks passed`);
+    return checks;
+};
+
 window.testEewRegionAggregation = function() {
     let checks = 0;
     const check = (condition, description) => {
@@ -575,4 +625,4 @@ console.log(
     '%c WebQuake dev injector ready ',
     'background:#1a1a1a;color:#8f8;padding:4px 8px;border-radius:3px'
 );
-console.log('testAll() | testNied() | testNiedGradient() | testNiedSpatial() | testNiedSpatial(3) | testNiedSpatialFilter() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testRegionPanel() | testRegionEew() | testRegionEew(false) | testEewRegionAggregation() | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
+console.log('testAll() | testNied() | testNiedGradient() | testNiedSpatial() | testNiedSpatial(3) | testNiedSpatialFilter() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testRegionPanel() | testRegionLabels() | testRegionLabelGeometry() | testRegionEew() | testRegionEew(false) | testEewRegionAggregation() | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
