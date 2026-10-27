@@ -105,6 +105,16 @@
     <div class="twp-row" id="twp-depth"></div>
 </div>
 
+<!-- Selected region details; kept above the station canvases like station popups. -->
+<div id="region-popup" role="dialog" aria-labelledby="region-popup-name" hidden>
+    <button class="sp-close" onclick="clearRegionSelection()" aria-label="Close">✕</button>
+    <div id="region-popup-name"></div>
+    <div class="region-popup-row"><span><span class="en">Live estimate</span><span class="ja">現在の揺れ（目安）</span><span class="zh">即時震度估計</span></span><span id="region-popup-live"></span></div>
+    <div class="region-popup-row"><span><span class="en">EEW forecast</span><span class="ja">緊急地震速報の予測</span><span class="zh">地震速報預估</span></span><span id="region-popup-eew"></span></div>
+    <div id="region-popup-events"></div>
+    <div id="region-popup-note"></div>
+</div>
+
 <!-- EEW floating panel -->
 <div id="eew-panel">
     <div id="no-eew-msg" class="no-eew-placeholder">
@@ -134,6 +144,26 @@
         <div id="obs-live-hidden"><span class="en">Live intensity on map hidden as past quake is being viewed.</span><span class="ja">過去の地震を表示中のため、リアルタイム震度は地図上で非表示です。</span><span class="zh">正在檢視過去地震資料，地圖上的即時震度已隱藏。</span></div>
     </div>
 </div>
+
+<!-- Current regional estimates and EEW forecasts, positioned below the observed summary. -->
+<section id="regions-panel" aria-labelledby="regions-title" hidden>
+    <button id="regions-toggle" type="button" onclick="toggleRegionPanel()" aria-expanded="true" aria-controls="regions-content">
+        <span id="regions-title"><span class="en">Regions</span><span class="ja">地域</span><span class="zh">區域</span></span>
+        <span id="regions-count"></span><span id="regions-chevron" aria-hidden="true">▾</span>
+    </button>
+    <div id="regions-content">
+        <table>
+            <thead><tr>
+                <th scope="col"><span class="en">Region</span><span class="ja">地域</span><span class="zh">區域</span></th>
+                <th scope="col"><span class="en">Live estimate</span><span class="ja">現在の揺れ<br>（目安）</span><span class="zh">即時震度<br>估計</span></th>
+                <th scope="col"><span class="en">EEW forecast</span><span class="ja">緊急地震速報<br>の予測</span><span class="zh">地震速報<br>預估</span></th>
+                <th scope="col"><span class="region-visually-hidden"><span class="en">Locate</span><span class="ja">位置</span><span class="zh">定位</span></span></th>
+            </tr></thead>
+            <tbody id="regions-list"></tbody>
+        </table>
+        <p class="regions-note"><span class="en">— Live: no supported reading of 1+. EEW: no regional forecast.</span><span class="ja">— 現在：周辺観測点で確認した震度1以上の値なし。予測：地域別の予測なし。</span><span class="zh">— 即時：無獲鄰近站支持的震度1以上數值。預估：無區域預估。</span></p>
+    </div>
+</section>
 
 <!-- Tsunami info card -->
 <div id="tsunami-panel"></div>

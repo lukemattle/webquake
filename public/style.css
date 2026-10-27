@@ -48,6 +48,51 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     margin-top: 4px; line-height: 1;
 }
 
+/* Regional comparison panel and the explicitly selected region's callout. */
+#regions-panel {
+    position: absolute; left: 10px; z-index: 999; width: 300px;
+    max-width: calc(100vw - 20px); max-height: 240px;
+    background: rgba(0,0,0,0.88); color: #fff; border-radius: 6px;
+    display: flex; flex-direction: column; overflow: hidden;
+}
+#regions-panel[hidden], #region-popup[hidden] { display: none; }
+body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; pointer-events: auto; }
+#regions-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%; flex-shrink: 0;
+    border: 0; background: none; color: #ddd; cursor: pointer;
+    padding: 8px 10px; font: 600 0.78em Roboto, sans-serif; text-align: left;
+}
+#regions-count { color: #999; font-weight: 400; }
+#regions-chevron { margin-left: auto; }
+#regions-content { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+#regions-content[hidden] { display: none; }
+#regions-panel table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#regions-panel th { padding: 4px; color: #aaa; font-size: 0.63em; font-weight: 400; }
+#regions-panel th:first-child { width: 45%; text-align: left; padding-left: 10px; }
+#regions-panel th:last-child { width: 30px; }
+#regions-panel td { padding: 4px; text-align: center; border-top: 1px solid #292929; }
+#regions-panel td:first-child { padding-left: 10px; text-align: left; }
+.region-select, .region-locate {
+    border: 0; background: none; color: #ddd; font: inherit; cursor: pointer;
+}
+.region-select { display: block; width: 100%; padding: 3px 0; text-align: left; font-size: 0.72em; overflow-wrap: anywhere; }
+.region-locate { padding: 5px 3px; font-size: 1em; }
+#regions-panel tr.region-selected { background: rgba(160,216,239,0.16); }
+.region-select:focus-visible, .region-locate:focus-visible, #regions-toggle:focus-visible { outline: 2px solid #a0d8ef; outline-offset: -1px; }
+.region-intensity { display: inline-block; min-width: 28px; border-radius: 3px; padding: 3px 4px; font-size: 0.82em; font-weight: 700; }
+.regions-note { color: #999; font-size: 0.63em; line-height: 1.4; padding: 5px 10px 8px; margin: 0; }
+.region-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+#region-popup {
+    position: absolute; z-index: 950; width: 240px; padding: 10px;
+    border: 1px solid #a0d8ef; border-radius: 5px; color: #fff;
+    background: rgba(20,20,20,0.96); box-shadow: 0 2px 12px #0008;
+    font-size: 0.78em; overflow-y: auto;
+}
+#region-popup-name { font-weight: 600; padding-right: 18px; margin-bottom: 8px; overflow-wrap: anywhere; }
+#region-popup .sp-close { position: absolute; top: 7px; right: 7px; border: 0; background: none; color: #aaa; cursor: pointer; padding: 0 3px; font-size: 1.1em; }
+.region-popup-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+#region-popup-events, #region-popup-note { color: #aaa; font-size: 0.85em; line-height: 1.4; margin-top: 6px; overflow-wrap: anywhere; }
+
 #bottom-bar {
     position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
     background: rgba(0,0,0,0.75); padding: 6px 12px;
@@ -371,7 +416,7 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     position: absolute; bottom: 40px; left: 10px; z-index: 998;
     background: rgba(0,0,0,0.82); border-radius: 6px;
     padding: 6px 10px; pointer-events: auto; cursor: help;
-    flex-direction: column; gap: 3px; display: none;
+    flex-direction: column; gap: 3px; display: none; overflow-y: auto; overscroll-behavior: contain;
 }
 #map-key.visible { display: flex; }
 .key-section + .key-section {

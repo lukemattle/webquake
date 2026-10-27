@@ -354,6 +354,19 @@ window.testRegionEew = function(withRegions = true, eventId = 'DEV-REGIONS-A', i
     console.log(`[test] ${eventId}: ${withRegions ? `regional forecast ${intensity}` : 'no regional forecast'}`);
 };
 
+// Two neighbouring regions, one with both a live estimate and an EEW forecast.
+// Try selecting rows, Locate, map clicks, language changes, and colouring off.
+window.testRegionPanel = function() {
+    testNiedSpatial(3, '3');
+    const west = Array.from({length: 7}, (_, i) => ({
+        code: `panel-west-${i}`, lat: 35.7 + i * 0.001, lon: 139.5,
+        int: i === 0 ? '2' : '1', raw: i === 0 ? 2 : 1
+    }));
+    displayData({type: 'nied_stations', stations: [...lastStations, ...west]});
+    testRegionEew();
+    console.log('[test] Regions panel: Tokyo wards live 3 / EEW 5−; eastern Tama live 2 / no forecast');
+};
+
 window.testEewRegionAggregation = function() {
     let checks = 0;
     const check = (condition, description) => {
@@ -562,4 +575,4 @@ console.log(
     '%c WebQuake dev injector ready ',
     'background:#1a1a1a;color:#8f8;padding:4px 8px;border-radius:3px'
 );
-console.log('testAll() | testNied() | testNiedGradient() | testNiedSpatial() | testNiedSpatial(3) | testNiedSpatialFilter() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testRegionEew() | testRegionEew(false) | testEewRegionAggregation() | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');
+console.log('testAll() | testNied() | testNiedGradient() | testNiedSpatial() | testNiedSpatial(3) | testNiedSpatialFilter() | testTwStations() | testTwQuake() | testTwQuakeClear() | testTwHistory() | testTwMatch() | testTwEew() | testTwEew(false) | testTwEewClear() | testEew() | testEew(true) | testEew(true, 3) | testRegionPanel() | testRegionEew() | testRegionEew(false) | testEewRegionAggregation() | testPlum() | testPastQuake() | testTsunami() | testTsunamiHuge() | testTsunamiWithObs() | testTsunamiObs() | testTsunamiClear() | testClock()');

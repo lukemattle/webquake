@@ -1,4 +1,5 @@
 const VERSION = 'v1.0.1';
+const FRONTEND_ASSET_BASE = new URL('.', document.currentScript.src);
 
 // ── Data source filter (Both / Japan only / Taiwan only) ───────────────
 // Purely a display filter: underlying WS data still arrives and is stored
@@ -714,6 +715,8 @@ function clearTsunamiCoastlines() {
 
 // ── Load regions GeoJSONs ─────────────────────────────────────────────
 let _regionFeatureBounds = null; // [{f, bbox:[minLon,minLat,maxLon,maxLat]}] for point-in-region lookups
+const regionLayersByCode = new Map();
+let regionNamesEn = {};
 
 function _geometryBBox(geometry) {
     let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
@@ -908,26 +911,33 @@ function resetTwRegionColors() {
     renderTwRegionColors();
 }
 
-// Relative (no leading slash) so this resolves against the *page's* own
-// directory (/ for prod, /dev/ for the dev frontend) rather than always
-// hitting prod's root — an absolute '/japan-regions.geojson' would silently
-// fetch prod's copy even from the dev site, since app.js's own fetch() calls
-// aren't touched by the server-side path-rewrite that index.html's <link>/
-// <script> tags get (see _render_index's dev handling in main.py).
-fetch('japan-regions.geojson')
+// Resolve against this script so /dev/ja/ and /dev/zh/ use the same development
+// assets as /dev/, without falling back to production files or a language path.
+fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
     .then(gj => {
         _regionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
         regionLayer = L.geoJSON(gj, {
             style: { color: '#333', weight: 0.5, fillColor: '#1c1c1c', fillOpacity: 0.65 }
         }).addTo(map);
+        regionLayer.eachLayer(layer => {
+            const code = String(layer.feature.properties.code);
+            if (code) regionLayersByCode.set(code, layer);
+        });
         // Loads async — if the user already switched to Taiwan-only before
         // this resolved, the layer would otherwise appear regardless.
         if (!showJapan()) map.removeLayer(regionLayer);
         refreshNiedSpatialState();
     });
 
-fetch('tsunami-regions.geojson')
+// Generated from the existing backend English region mapping. Native names
+// remain available immediately, including regions without an English entry.
+fetch(new URL('japan-region-names.json', FRONTEND_ASSET_BASE))
+    .then(r => r.ok ? r.json() : {})
+    .then(names => { regionNamesEn = names; renderRegionPanel(); })
+    .catch(() => {});
+
+fetch(new URL('tsunami-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
     .then(gj => {
         tsunamiLayer = L.geoJSON(gj, {
@@ -942,7 +952,7 @@ fetch('tsunami-regions.geojson')
         });
     });
 
-fetch('taiwan-regions.geojson')
+fetch(new URL('taiwan-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
     .then(gj => {
         _twRegionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
@@ -1055,6 +1065,7 @@ function renderRegionColors() {
         });
     });
     updateMapKey();
+    renderRegionPanel();
 }
 
 function showReportRegionColors(areaIntensities) {
@@ -1078,6 +1089,250 @@ function clearReportRegionColors() {
     _maxReportIntRank = -1;
     renderRegionColors();
 }
+
+// ── Regional comparison and explicit selection ────────────────────────
+let regionRows = [];
+let regionRowElements = new Map();
+let regionsCollapsed = false;
+let selectedRegionCode = null;
+let selectedRegionAnchor = null;
+let selectedRegionOutline = null;
+let _regionPanelState = null;
+map.createPane('regionSelection');
+map.getPane('regionSelection').style.zIndex = 430;
+map.getPane('regionSelection').style.pointerEvents = 'none';
+
+function regionDisplayName(code) {
+    const nativeName = regionLayersByCode.get(code)?.feature.properties.name || code;
+    return currentLanguage === 'en' ? (regionNamesEn[code] || nativeName) : nativeName;
+}
+
+function getRegionRows() {
+    if (!showJapan() || liveStationsHidden || reportRegionViewActive) return [];
+    const codes = new Set([...liveNiedRegionIntensities.keys(), ...eewRegionIntensities.keys()]);
+    return [...codes].filter(code => regionLayersByCode.has(code)).map(code => ({
+        code,
+        live: liveNiedRegionIntensities.get(code) ?? null,
+        forecast: eewRegionIntensities.get(code)?.max_int ?? null
+    })).sort((a, b) =>
+        Math.max(intRank(b.live), intRank(b.forecast)) - Math.max(intRank(a.live), intRank(a.forecast)) ||
+        a.code.localeCompare(b.code)
+    );
+}
+
+function regionValueExplanation(source) {
+    return source === 'live'
+        ? t('No spatially supported live reading of intensity 1 or above', '周辺観測点で確認した震度1以上の値なし', '沒有獲鄰近站支持的震度1以上即時數值')
+        : t('No regional EEW forecast available', '地域別の緊急地震速報の予測なし', '尚無區域地震速報預估');
+}
+
+function setRegionIntensityBadge(element, value, source) {
+    element.className = 'region-intensity';
+    element.textContent = value ?? '—';
+    element.style.background = value != null ? intColor(value) : '#333';
+    element.style.color = intTextColor(value);
+    element.title = value == null ? regionValueExplanation(source) : '';
+}
+
+function renderRegionPanel() {
+    const panel = document.getElementById('regions-panel');
+    regionRows = getRegionRows();
+    panel.hidden = regionRows.length === 0;
+    document.body.classList.toggle('has-regions', !panel.hidden);
+    if (!regionRows.some(row => row.code === selectedRegionCode)) clearRegionSelection();
+    document.getElementById('regions-count').textContent = regionRows.length;
+    const signature = JSON.stringify([currentLanguage, regionRows.map(row => [row.code, row.live, row.forecast, regionDisplayName(row.code)])]);
+    if (signature !== _regionPanelState) {
+        _regionPanelState = signature;
+        const content = document.getElementById('regions-content');
+        const scrollTop = content.scrollTop;
+        const focused = document.activeElement;
+        const focusedCode = focused?.dataset.regionSelect ?? focused?.dataset.regionLocate;
+        const focusedLocate = focused?.dataset.regionLocate != null;
+        const fragment = document.createDocumentFragment();
+        regionRowElements = new Map();
+        for (const row of regionRows) {
+            const tr = document.createElement('tr');
+            tr.dataset.regionCode = row.code;
+            const nameCell = document.createElement('td');
+            const select = document.createElement('button');
+            select.type = 'button';
+            select.className = 'region-select';
+            select.dataset.regionSelect = row.code;
+            select.textContent = regionDisplayName(row.code);
+            nameCell.appendChild(select);
+            tr.appendChild(nameCell);
+            for (const [source, value] of [['live', row.live], ['eew', row.forecast]]) {
+                const cell = document.createElement('td');
+                const badge = document.createElement('span');
+                setRegionIntensityBadge(badge, value, source);
+                cell.appendChild(badge);
+                tr.appendChild(cell);
+            }
+            const locateCell = document.createElement('td');
+            const locate = document.createElement('button');
+            locate.type = 'button';
+            locate.className = 'region-locate';
+            locate.dataset.regionLocate = row.code;
+            locate.textContent = '⌖';
+            locate.title = `${t('Locate', '位置を表示', '定位')} ${regionDisplayName(row.code)}`;
+            locate.setAttribute('aria-label', locate.title);
+            locateCell.appendChild(locate);
+            tr.appendChild(locateCell);
+            regionRowElements.set(row.code, tr);
+            fragment.appendChild(tr);
+        }
+        document.getElementById('regions-list').replaceChildren(fragment);
+        content.scrollTop = scrollTop;
+        if (focusedCode) {
+            const row = regionRowElements.get(focusedCode);
+            (row?.querySelector(focusedLocate ? '.region-locate' : '.region-select') || document.getElementById('regions-toggle')).focus({preventScroll: true});
+        }
+    }
+    updateRegionSelectedRows();
+    renderSelectedRegion();
+    positionObsPanel();
+}
+
+function updateRegionSelectedRows() {
+    for (const [code, row] of regionRowElements) {
+        row.classList.toggle('region-selected', code === selectedRegionCode);
+        row.querySelector('.region-select').setAttribute('aria-pressed', String(code === selectedRegionCode));
+    }
+}
+
+function toggleRegionPanel() {
+    regionsCollapsed = !regionsCollapsed;
+    document.getElementById('regions-content').hidden = regionsCollapsed;
+    document.getElementById('regions-toggle').setAttribute('aria-expanded', String(!regionsCollapsed));
+    document.getElementById('regions-chevron').textContent = regionsCollapsed ? '▸' : '▾';
+    positionTsunamiPanel();
+}
+
+function clearRegionSelection() {
+    if (selectedRegionCode == null && !selectedRegionOutline) return;
+    selectedRegionCode = null;
+    selectedRegionAnchor = null;
+    if (selectedRegionOutline) map.removeLayer(selectedRegionOutline);
+    selectedRegionOutline = null;
+    document.getElementById('region-popup').hidden = true;
+    updateRegionSelectedRows();
+}
+
+function selectRegion(code, anchor) {
+    const layer = regionLayersByCode.get(code);
+    if (!layer || !regionRows.some(row => row.code === code)) return;
+    dismissStationPopup();
+    dismissTwQuakePopup();
+    if (selectedRegionCode !== code) {
+        if (selectedRegionOutline) map.removeLayer(selectedRegionOutline);
+        selectedRegionOutline = L.geoJSON(layer.feature, {
+            pane: 'regionSelection', interactive: false,
+            style: {color: '#fff', weight: 2.5, opacity: 1, fill: false}
+        }).addTo(map);
+    }
+    selectedRegionCode = code;
+    selectedRegionAnchor = anchor || layer.getBounds().getCenter();
+    updateRegionSelectedRows();
+    const row = regionRowElements.get(code);
+    if (row && !regionsCollapsed) {
+        const content = document.getElementById('regions-content');
+        const bounds = row.getBoundingClientRect();
+        const visible = content.getBoundingClientRect();
+        if (bounds.top < visible.top) content.scrollTop -= visible.top - bounds.top;
+        else if (bounds.bottom > visible.bottom) content.scrollTop += bounds.bottom - visible.bottom;
+    }
+    renderSelectedRegion();
+}
+
+function renderSelectedRegion() {
+    if (!selectedRegionCode) return;
+    const row = regionRows.find(candidate => candidate.code === selectedRegionCode);
+    if (!row) return;
+    const popup = document.getElementById('region-popup');
+    popup.hidden = false;
+    document.getElementById('region-popup-name').textContent = regionDisplayName(row.code);
+    setRegionIntensityBadge(document.getElementById('region-popup-live'), row.live, 'live');
+    setRegionIntensityBadge(document.getElementById('region-popup-eew'), row.forecast, 'eew');
+    popup.querySelector('.sp-close').setAttribute('aria-label', t('Close region details', '地域の詳細を閉じる', '關閉區域詳情'));
+    const sources = (eewRegionIntensities.get(row.code)?.eventIds || []).map(id => {
+        const data = activeEews.get(id);
+        const location = (currentLanguage === 'en' ? data?.epi_location_en : data?.epi_location_jp)?.[0] || 'EEW';
+        return `${location} #${data?.report_num ?? '—'}`;
+    });
+    const events = document.getElementById('region-popup-events');
+    events.hidden = !sources.length;
+    events.textContent = t('Forecast from: ', '予測の出典：', '預估來源：') + sources.join(' · ');
+    const notes = [];
+    if (row.live == null) notes.push(regionValueExplanation('live'));
+    if (row.forecast == null) notes.push(regionValueExplanation('eew'));
+    const note = document.getElementById('region-popup-note');
+    note.hidden = !notes.length;
+    note.textContent = notes.join(' · ');
+    positionRegionPopup();
+}
+
+function regionMapSpace() {
+    const size = map.getSize();
+    const panels = ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel'].map(id => document.getElementById(id))
+        .filter(element => element.getClientRects().length).map(element => element.getBoundingClientRect());
+    const mobile = size.x < 800;
+    const right = size.x - (!quakeSidebarCollapsed ? Math.min(258, size.x - 120) : 0) - 12;
+    let left = mobile ? 12 : Math.max(12, ...panels.map(rect => rect.right + 12));
+    const top = mobile ? Math.max(12, ...panels.map(rect => rect.bottom + 12)) : 12;
+    const timeline = document.getElementById('timeline-panel');
+    let bottom = timeline.classList.contains('visible') ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
+    const zoom = document.querySelector('.leaflet-control-zoom');
+    if (zoom) bottom = Math.min(bottom, zoom.getBoundingClientRect().top - 12);
+    const key = document.getElementById('map-key');
+    if (mobile && key.classList.contains('visible') && key.getBoundingClientRect().bottom > top) {
+        left = Math.max(left, key.getBoundingClientRect().right + 12);
+    }
+    return {left: Math.min(left, right - 120), top: Math.min(top, bottom - 120), right, bottom};
+}
+
+function locateRegion(code) {
+    collapseSidebarOnMobile();
+    selectRegion(code);
+    const layer = regionLayersByCode.get(code);
+    if (!layer || selectedRegionCode !== code) return;
+    const size = map.getSize();
+    const space = regionMapSpace();
+    map.fitBounds(layer.getBounds(), {
+        paddingTopLeft: [space.left + 12, space.top + 12],
+        paddingBottomRight: [size.x - space.right + 12, size.y - space.bottom + 12],
+        maxZoom: 10, animate: true, duration: 0.6
+    });
+}
+
+function positionRegionPopup() {
+    if (!selectedRegionAnchor || document.getElementById('region-popup').hidden) return;
+    const popup = document.getElementById('region-popup');
+    const space = regionMapSpace();
+    popup.style.width = Math.min(240, space.right - space.left) + 'px';
+    popup.style.maxHeight = (space.bottom - space.top) + 'px';
+    const point = map.latLngToContainerPoint(selectedRegionAnchor);
+    const width = popup.offsetWidth, height = popup.offsetHeight;
+    popup.style.left = Math.max(space.left, Math.min(point.x + 12, space.right - width)) + 'px';
+    popup.style.top = Math.max(space.top, Math.min(point.y - height - 12, space.bottom - height)) + 'px';
+}
+
+function handleRegionMapClick(x, y) {
+    dismissStationPopup();
+    if (!showJapan() || liveStationsHidden || reportRegionViewActive) { clearRegionSelection(); return; }
+    const anchor = map.containerPointToLatLng([x, y]);
+    const code = findRegionCodeForPoint(anchor.lat, anchor.lng);
+    if (code && regionRows.some(row => row.code === String(code))) selectRegion(String(code), anchor);
+    else clearRegionSelection();
+}
+
+document.getElementById('regions-list').addEventListener('click', event => {
+    const row = event.target.closest('tr[data-region-code]');
+    if (!row) return;
+    if (event.target.closest('.region-locate')) locateRegion(row.dataset.regionCode);
+    else selectRegion(row.dataset.regionCode);
+});
+map.on('move zoom resize', positionRegionPopup);
 
 // ── Adaptive map key / legend ──────────────────────────────────────────
 // Shows intensity levels from 1 up to the highest currently shown on the
@@ -1848,6 +2103,7 @@ function _formatAge(ms) {
 }
 
 function showStationPopup(st, px, py, source) {
+    clearRegionSelection();
     document.getElementById('sp-name').textContent = st.code || st.name || '–';
     const badgeEl = document.getElementById('sp-source-badge');
     if (source === 'exptech') {
@@ -1925,6 +2181,7 @@ function showTwQuakePopup(px, py) {
 }
 
 map.getContainer().addEventListener('click', function(e) {
+    if (e.target.closest('.leaflet-control')) return;
     if (e.target.closest('#station-popup')) return;
     if (e.target.closest('#tw-quake-popup')) return;
     dismissTwQuakePopup();
@@ -1935,7 +2192,7 @@ map.getContainer().addEventListener('click', function(e) {
     const z  = map.getZoom();
 
     // Check S-net stations first (they're below NIED z-index but we check by proximity)
-    if (showJapan() && lastSnetStations.length) {
+    if (showJapan() && snetVisible && !liveStationsHidden && lastSnetStations.length) {
         const snetHitR = Math.max(5, Math.min(16, Math.round(z * 2 - 3))) / 2 + 4;
         let snetClosest = null, snetBest = Infinity;
         lastSnetStations.forEach(st => {
@@ -1969,7 +2226,7 @@ map.getContainer().addEventListener('click', function(e) {
         }
     }
 
-    if (!showJapan() || !lastStations.length || liveStationsHidden) { dismissStationPopup(); return; }
+    if (!showJapan() || !lastStations.length || liveStationsHidden) { handleRegionMapClick(mx, my); return; }
 
     const hitR = Math.max(6, Math.min(20, Math.round(z * 2 - 2))) / 2 + 4;
     let closest = null, bestDist = Infinity;
@@ -1984,7 +2241,7 @@ map.getContainer().addEventListener('click', function(e) {
         showStationPopup(closest.st, closest.pt.x, closest.pt.y, 'nied');
         L.DomEvent.stopPropagation(e);
     } else {
-        dismissStationPopup();
+        handleRegionMapClick(mx, my);
     }
 });
 
@@ -2553,14 +2810,44 @@ function renderTsunamiCard() {
 }
 
 function positionTsunamiPanel() {
+    positionRegionsPanel();
     const panel = document.getElementById('tsunami-panel');
-    if (!panel.classList.contains('visible')) return;
-    const obsEl = document.getElementById('obs-panel');
-    const eewEl = document.getElementById('eew-panel');
-    const anchor = obsEl.classList.contains('visible') ? obsEl : eewEl;
-    const rect = anchor.getBoundingClientRect();
-    panel.style.top  = (rect.bottom + 6) + 'px';
-    panel.style.left = '10px';
+    if (panel.classList.contains('visible')) {
+        const regionsEl = document.getElementById('regions-panel');
+        const obsEl = document.getElementById('obs-panel');
+        const eewEl = document.getElementById('eew-panel');
+        const anchor = !regionsEl.hidden ? regionsEl : obsEl.classList.contains('visible') ? obsEl : eewEl;
+        panel.style.top = (anchor.getBoundingClientRect().bottom + 6) + 'px';
+        panel.style.left = '10px';
+    }
+    positionMapKey();
+    positionRegionPopup();
+}
+
+function positionRegionsPanel() {
+    const panel = document.getElementById('regions-panel');
+    if (panel.hidden) return;
+    const obs = document.getElementById('obs-panel');
+    const anchor = obs.classList.contains('visible') ? obs : document.getElementById('eew-panel');
+    const top = anchor.getBoundingClientRect().bottom + 6;
+    const tsunami = document.getElementById('tsunami-panel');
+    const tsunamiHeight = tsunami.classList.contains('visible') ? tsunami.offsetHeight + 6 : 0;
+    const bottomReserve = window.innerWidth <= 650 ? 90 : 50;
+    const key = document.getElementById('map-key');
+    const bottom = key.classList.contains('visible')
+        ? Math.min(window.innerHeight - bottomReserve, key.getBoundingClientRect().bottom - 80)
+        : window.innerHeight - bottomReserve;
+    panel.style.top = top + 'px';
+    panel.style.maxHeight = Math.max(36, Math.min(240, bottom - top - tsunamiHeight - 12)) + 'px';
+}
+
+function positionMapKey() {
+    const key = document.getElementById('map-key');
+    if (!key.classList.contains('visible')) return;
+    const bottom = Math.max(...['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']
+        .map(id => document.getElementById(id)).filter(element => element.getClientRects().length)
+        .map(element => element.getBoundingClientRect().bottom));
+    key.style.maxHeight = Math.max(40, key.getBoundingClientRect().bottom - bottom - 8) + 'px';
 }
 
 // ── EEW panel ─────────────────────────────────────────────────────────
@@ -2756,6 +3043,7 @@ function setLanguage(lang) {
         if (window.OneSignal) window.OneSignal.User.setLanguage(notifLang);
     }
     updateMapKey();
+    renderRegionPanel();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -2767,6 +3055,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadTimelineMarkersAndGaps();
     // Fallback only — new quakes/tsunamis trigger an immediate refresh themselves (see displayData).
     if (!_timelineRefreshTimer) _timelineRefreshTimer = setInterval(loadTimelineMarkersAndGaps, 300000);
+    const panelResize = new ResizeObserver(positionObsPanel);
+    for (const id of ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
 });
 
 // ── WebSocket ─────────────────────────────────────────────────────────
@@ -2883,6 +3173,7 @@ function toggleQuakeSidebar() {
     btn.textContent = quakeSidebarCollapsed ? '◀' : '▶';
     const leafletRight = document.querySelector('.leaflet-bottom.leaflet-right');
     if (leafletRight) leafletRight.style.right = quakeSidebarCollapsed ? '0' : '262px';
+    positionRegionPopup();
 }
 
 // Collapses the quake history sidebar after a map/replay action on mobile,
