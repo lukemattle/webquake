@@ -3,19 +3,33 @@
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from ipaddress import ip_address, ip_network
+import os
 import queue
 import socket
 import threading
 import time
 
 
-MAX_CONNECTIONS = 10_000
-MAX_CONNECTIONS_PER_IP = 100
-MAX_MESSAGE_SIZE = 1024
-MAX_PENDING_MESSAGES = 64
-MAX_PENDING_BYTES = 1024 * 1024
-MAX_TOTAL_PENDING_BYTES = 128 * 1024 * 1024
-MAX_SEND_SECONDS = 10
+def _positive_int_env(name, default):
+    value = os.environ.get(name, '').strip()
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise ValueError(f'{name} must be a positive integer') from None
+    if parsed <= 0:
+        raise ValueError(f'{name} must be a positive integer')
+    return parsed
+
+
+MAX_CONNECTIONS = _positive_int_env('WEBQUAKE_WS_MAX_CONNECTIONS', 10_000)
+MAX_CONNECTIONS_PER_IP = _positive_int_env('WEBQUAKE_WS_MAX_CONNECTIONS_PER_IP', 100)
+MAX_MESSAGE_SIZE = _positive_int_env('WEBQUAKE_WS_MAX_MESSAGE_SIZE', 1024)
+MAX_PENDING_MESSAGES = _positive_int_env('WEBQUAKE_WS_MAX_PENDING_MESSAGES', 64)
+MAX_PENDING_BYTES = _positive_int_env('WEBQUAKE_WS_MAX_PENDING_BYTES', 1024 * 1024)
+MAX_TOTAL_PENDING_BYTES = _positive_int_env('WEBQUAKE_WS_MAX_TOTAL_PENDING_BYTES', 128 * 1024 * 1024)
+MAX_SEND_SECONDS = _positive_int_env('WEBQUAKE_WS_MAX_SEND_SECONDS', 10)
 
 
 def client_ip(remote_addr, connecting_ip, trusted_proxies):
