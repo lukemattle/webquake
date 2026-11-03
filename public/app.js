@@ -1243,7 +1243,7 @@ function getRegionRows() {
         live: liveNiedRegionIntensities.get(code) ?? null,
         forecast: eewRegionIntensities.get(code)?.max_int ?? null
     })).sort((a, b) =>
-        Math.max(intRank(b.live), intRank(b.forecast)) - Math.max(intRank(a.live), intRank(a.forecast)) ||
+        intRank(b.live) - intRank(a.live) ||
         a.code.localeCompare(b.code)
     );
 }
