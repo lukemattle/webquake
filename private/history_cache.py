@@ -5,25 +5,22 @@ _INF = float('inf')
 
 
 class HistoryCache:
-    """In-memory mirror of the history_log SQLite table, covering the most
-    recent retention window. Replay reads (markers/gaps/window/state) are
-    served from here instead of SQLite so many concurrent replay viewers
-    don't contend with the live write path or each other.
+    """Thread-safe replay cache for the retained history_log window.
 
-    SQLite remains the durable store: rows are still inserted there first,
-    this cache is just a read-side accelerator rebuilt from it on startup
-    (load_from_db) and kept in sync afterwards (add/prune).
-    """
+    SQLite remains the durable store. Rebuild this cache on startup and keep
+    it in sync through add/prune so replay reads avoid database contention."""
 
     def __init__(self):
         self._lock = threading.RLock()
         self._seq = 0
-        self._all = []      # (ts, seq, msg_type, payload, marker_kind, marker_label, event_ts), sorted by ts then seq
+        # Entries: (ts, seq, msg_type, payload, marker_kind, marker_label, event_ts).
+        # seq breaks timestamp ties before bisect compares payload fields.
+        self._all = []  # Sorted by (ts, seq).
         self._by_type = {}  # msg_type -> same-shaped list, sorted
         self._markers = []  # subset of entries where marker_kind is not None, sorted
-        self._size_bytes = 0  # running total mirroring stats()'s size_bytes, kept in sync by add()/prune()
+        self._size_bytes = 0  # Text-size estimate maintained by add/prune.
         self.ready = False
-        # Startup-load metadata, set by the caller (main.py) for admin/diagnostic reporting.
+        # Startup-load metadata set by main.py for admin reporting.
         self.load_seconds: float | None = None
         self.load_error: str | None = None
         self.loaded_at: float | None = None
@@ -55,7 +52,8 @@ class HistoryCache:
             self._size_bytes += self._entry_size(entry)
 
     def load_from_db(self, rows):
-        """rows: iterable of (ts, msg_type, payload, marker_kind, marker_label, event_ts)."""
+        """rows: iterable of (ts, msg_type, payload, marker_kind, marker_label,
+        event_ts)."""
         with self._lock:
             self.clear()
             for ts, msg_type, payload, marker_kind, marker_label, event_ts in rows:
@@ -131,9 +129,9 @@ class HistoryCache:
             return [(e[0], e[2], e[4], e[5], e[6]) for e in self._markers[lo:hi]]
 
     def stats(self):
-        """Snapshot of cache size/coverage for admin/diagnostic reporting.
-        size_bytes mirrors the SUM(LENGTH(...)) estimate main.py already
-        computes for the SQLite history_log table, so the two are comparable."""
+        """Return cache size and coverage for admin reporting.
+
+        size_bytes matches the SQLite SUM(LENGTH(...)) estimate, not RAM usage."""
         with self._lock:
             rows = len(self._all)
             size_bytes = self._size_bytes

@@ -24,7 +24,8 @@ with open(_station_lookup_path, encoding='utf-8') as _f:
     _station_lookup = {s['code']: s for s in json.load(_f)}
 
 def _flatten_geometry_rings(geometry):
-    """Flatten a GeoJSON Polygon/MultiPolygon into a flat list of rings [[(lon,lat), ...], ...]."""
+    """Flatten a GeoJSON Polygon/MultiPolygon into a flat list of rings [[(lon,lat),
+    ...], ...]."""
     gtype = geometry.get('type')
     coords = geometry.get('coordinates', [])
     rings = []
@@ -60,11 +61,8 @@ _JP_FULL_BOUNDS = (
 
 
 # --- Configuration ---------------------------------------------------------
-# Every setting below is read from the environment, and none of them fall back
-# to a working value. Required variables abort startup when unset; optional
-# ones default to empty, which disables the feature they belong to. That is
-# what stops a fork from publishing to the upstream ntfy topics, Discord
-# channels or OneSignal app just because it forgot to configure its own.
+# Required environment variables are checked at startup; empty optional values
+# disable their features. Notification destinations have no defaults.
 
 _missing_env = []
 
@@ -88,14 +86,10 @@ def _check_required_env():
             + "\n\nSee .env.example for the full list and how to obtain each value."
         )
 
-# Flask session signing key. Must be stable across restarts and across workers,
-# otherwise every logged-in session is silently invalidated whenever the
-# process is replaced.
+# Keep the session key stable across restarts and workers to preserve logins.
 SECRET_KEY = _require_env("WEBQUAKE_SECRET_KEY")
 
-# DM-DSS (DMDATA) credentials for the paid subscription this server reads from.
-# client_id/client_secret are consumed by dmdws itself; they are required here
-# so an unset one is reported at startup alongside everything else.
+# dmdws reads these credentials; validate them here for one startup error list.
 DMDATA_REFRESH_TOKEN = _require_env("WEBQUAKE_DMDATA_REFRESH_TOKEN")
 _require_env("WEBQUAKE_DMDATA_CLIENT_ID")
 _require_env("WEBQUAKE_DMDATA_CLIENT_SECRET")
@@ -110,7 +104,6 @@ ONESIGNAL_REST_API_KEY = _optional_env("WEBQUAKE_ONESIGNAL_REST_API_KEY")
 
 # --- ntfy (self-hosted) config ---
 # NTFY_TOKEN is a publish-only access token created on the ntfy server.
-# The topic names deliberately have no defaults - see the note above.
 NTFY_URL = _optional_env("WEBQUAKE_NTFY_URL")
 NTFY_TOPIC_ALERTS_EN = _optional_env("WEBQUAKE_NTFY_TOPIC_ALERTS_EN")
 NTFY_TOPIC_ALERTS_JA = _optional_env("WEBQUAKE_NTFY_TOPIC_ALERTS_JA")
@@ -123,15 +116,13 @@ NTFY_CLICK_URL = SITE_URL
 # --- Discord webhook config ---
 DISCORD_WEBHOOK_EN = _optional_env("WEBQUAKE_DISCORD_WEBHOOK_EN")
 DISCORD_WEBHOOK_JA = _optional_env("WEBQUAKE_DISCORD_WEBHOOK_JA")
-# Bot token used only to crosspost/publish webhook messages in the announcement channels
-# so servers following them receive the message too. Manage Messages permission only.
+# Crossposting requires a bot with Manage Messages permission in the channel.
 DISCORD_BOT_TOKEN = _optional_env("WEBQUAKE_DISCORD_BOT_TOKEN")
 SITE_LINK_EN = SITE_URL
 SITE_LINK_JA = f"{SITE_URL.rstrip('/')}/ja/" if SITE_URL else ""
 
 # --- Admin panel config ---
-# An unset password disables the admin panel outright rather than falling back
-# to a guessable default: every /admin and /api/admin route then returns 404.
+# An unset password makes all admin routes return 404.
 ADMIN_PASSWORD = _optional_env("WEBQUAKE_ADMIN_PASSWORD")
 ADMIN_ENABLED = bool(ADMIN_PASSWORD)
 ADMIN_DIR = os.path.join(BASE_DIR, 'admin')
@@ -146,21 +137,20 @@ _check_required_env()
 if not ADMIN_ENABLED:
     dmdws.logger.warning("WEBQUAKE_ADMIN_PASSWORD is not set - the admin panel is disabled")
 
-# Creating the connection object
 conn = dmdws.Connection(
     refresh_token=DMDATA_REFRESH_TOKEN,
     types=[
-        "VXSE43", # Earthquake early warning (warning) (5- and above) (predicted)
-        "VXSE45", # Earthquake early warning (seismic motion forecast) (below 5- intensity) (done)
-        "VXSE47", # Real-time seismic intensity only used for PLUM (predicted)
-        "VXSE51", # Earthquake intensity report (done)
-        "VXSE52", # Earthquake information (information about the epicenter) (done)
-        "VXSE53", # Earthquake information (information regarding the epicenter and intensity) (done)
-        "VTSE41", # Tsunami warning/advisory/forecast (done)
-        "VTSE51", # Tsunami information (done)
-        "VTSE52" # Tsunami information (information regarding offshore tsunami observation)
+        "VXSE43",  # EEW warning (predicted intensity 5− or above).
+        "VXSE45",  # EEW forecast.
+        "VXSE47",  # PLUM intensity prediction.
+        "VXSE51",  # Observed intensity report.
+        "VXSE52",  # Epicenter report.
+        "VXSE53",  # Epicenter and observed intensity report.
+        "VTSE41",  # Tsunami warning/advisory/forecast.
+        "VTSE51",  # Coastal tsunami observations.
+        "VTSE52"  # Offshore tsunami observations.
     ],
-    debug=True # If you want to see the debug messages, disable in production
+    debug=True  # If you want to see the debug messages, disable in production
 )
 
 def _safe_ts(iso_str):
@@ -172,37 +162,26 @@ def _safe_ts(iso_str):
     except (ValueError, TypeError):
         return None
 
-# JMA tsunami warning kind codes — 気象庁防災情報XMLフォーマット コード表,
-# "警報等情報要素／津波警報・注意報・予報". Verified against JMA's own published
-# telegrams (2011-03-11 Tohoku, 2011-03-13, 2015-11-14, 2016-09-01, 2018-12-04,
-# 2025-07-02), which between them exercise every code below.
-#
-# Note 52 vs 53: JMA writes "大津波警報：発表" (53) for an area entering a major
-# warning on the first report or newly upgraded to one, and "大津波警報" (52) for
-# an area continuing under one. Both are the major-warning tier.
+# JMA tsunami kind codes: 警報等情報要素／津波警報・注意報・予報.
+# Both 53 (new/upgraded) and 52 (continuing) mean a major warning.
 TSUNAMI_KIND_LEVEL = {
-    '53': 'Major Warning',           # 大津波警報：発表
-    '52': 'Major Warning',           # 大津波警報
-    '51': 'Warning',                 # 津波警報
-    '62': 'Advisory',                # 津波注意報
-    '71': 'Slight sea level change', # 津波予報（若干の海面変動）
-    '72': 'Slight sea level change', # 〃 (after an advisory was lifted)
-    '73': 'Slight sea level change', # 〃 (after a warning was lifted)
+    '53': 'Major Warning',  # 大津波警報：発表
+    '52': 'Major Warning',  # 大津波警報
+    '51': 'Warning',  # 津波警報
+    '62': 'Advisory',  # 津波注意報
+    '71': 'Slight sea level change',  # 津波予報（若干の海面変動）
+    '72': 'Slight sea level change',  # 〃 (after an advisory was lifted)
+    '73': 'Slight sea level change',  # 〃 (after a warning was lifted)
 }
-# Areas with nothing in force. 50 警報解除 / 60 津波注意報解除 are the "just lifted"
-# states; 00 津波なし appears mainly as a lastKind but is accepted here for safety.
+# Lifted states: 50 = warning, 60 = advisory, 00 = no tsunami.
 TSUNAMI_LIFTED_KINDS = {'50', '60', '00'}
 # Most severe first. Mirrors TSUNAMI_LEVELS in public/app.js (which is low→high).
 _TSUNAMI_LEVEL_ORDER = ['Major Warning', 'Warning', 'Advisory', 'Slight sea level change']
 
 def _tsunami_forecasts_in_force(data):
-    """Forecast entries for areas that still have something in force.
+    """Return forecast areas with an active warning, advisory or forecast.
 
-    JMA lists areas whose warning was just lifted in the *same* `forecasts` array
-    as areas still under one ("津波警報・注意報を解除した津波予報区について、発表
-    状況を記載する"), so lifted areas have to be dropped before rendering —
-    otherwise a stood-down coast keeps a coloured band on the map.
-    """
+    JMA includes lifted areas in the same array; exclude them before rendering."""
     forecasts = data.get('body', {}).get('body', {}).get('tsunami', {}).get('forecasts', []) or []
     return [f for f in forecasts
             if ((f.get('kind') or {}).get('code')) not in TSUNAMI_LIFTED_KINDS]
@@ -216,22 +195,12 @@ def _tsunami_warning_level(kind_codes):
     return 'Slight sea level change'
 
 def _is_tsunami_all_clear(data):
-    """True if this VTSE41/VTSE51 telegram leaves nothing at all in force.
+    """Return whether a VTSE41/VTSE51 report retracts all active tsunami levels.
 
-    The real test is "every listed area is now lifted", because JMA mixes lifted
-    areas in with ones still under a 津波予報（若干の海面変動）. This previously
-    keyed on fixed comment code 0107, which only asserts that no 警報/注意報
-    remains — not that nothing remains. It therefore fired while dozens of coasts
-    were still under an active slight-sea-level-change forecast (66 areas on
-    2011-03-13, 29 on 2016-09-01) and wiped them from the display early. Those
-    telegrams carry a validDateTime, which store_recent_data already uses to
-    expire them at the time JMA actually specifies.
-
-    A retraction (infoType 取消, "先ほどの、津波注意報を取り消します。") carries no
-    `tsunami` object and no comments at all — only free text — so neither the
-    per-area test nor the 0107 one sees it, and it used to fall through to an
-    empty 'Slight sea level change' payload that nothing ever cleared.
-    """
+    Retractions (infoType 取消) can omit tsunami data entirely. With forecast
+    areas present, all must be lifted: code 0107 only clears warnings and
+    advisories, so slight-sea-level forecasts may still be active. Use 0107
+    as the fallback only when no forecast areas are supplied."""
     if data.get('body', {}).get('infoType') == '取消':
         return True
     tsunami = data.get('body', {}).get('body', {}).get('tsunami', {}) or {}
@@ -247,19 +216,11 @@ def _safe_float(value, default=0.0):
         return default
 
 def _summarize_obs_region(region):
-    """Pick a representative max-wave-height reading for an observation region.
+    """Return (height, condition, over) for a coastal observation region.
 
-    Unlike forecast entries, VTSE51 observation regions don't carry their own
-    maxHeight — each has a `stations` list, and small tsunamis are often only
-    reported qualitatively (e.g. "微弱"/faint, "欠測"/no data) rather than as a
-    numeric height. Prefer the highest numeric reading across stations; fall
-    back to the most informative qualitative condition otherwise.
-
-    Returns (height, condition, over). `over` belongs to whichever station
-    supplied the winning height: a reading of 3.5m with over=true means "3.5m or
-    higher", which is how JMA reports a gauge that saturated or was destroyed
-    mid-event, so dropping it understates the observation.
-    """
+    Prefer the highest numeric station reading, then a qualitative condition.
+    Keep the winning station's over flag: a saturated gauge reports a lower
+    bound, not an exact height."""
     best_height = 0.0
     best_condition = ''
     best_over = False
@@ -281,7 +242,8 @@ def _summarize_obs_region(region):
     return best_height, ('' if best_height else best_condition), (best_over if best_height else False)
 
 def _extract_coord(data):
-    """Return (lat, lon) floats from the hypocenter coordinate object, or (None, None)."""
+    """Return (lat, lon) floats from the hypocenter coordinate object, or (None,
+    None)."""
     hypo = data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {})
     coord = hypo.get('coordinate', {})
     lat_val = coord.get('latitude', {}).get('value')
@@ -293,7 +255,8 @@ def _extract_coord(data):
 _INT_RANK = {'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5-': 5, '5+': 6, '6-': 7, '6+': 8, '7': 9}
 
 def _max_shindo_from_stations(stations_raw):
-    """Return the highest shindo value among per-station readings, or None if there are none."""
+    """Return the highest shindo value among per-station readings, or None if there
+    are none."""
     best = None
     for st in stations_raw:
         val = st.get('revInt') or st.get('int') or '0'
@@ -304,14 +267,10 @@ def _max_shindo_from_stations(stations_raw):
     return best
 
 def _resolve_bound(bounds):
-    """Collapse a schema forecast range object ({from, to}) to a single value, or None.
+    """Resolve a JMA forecast range to one value, or None.
 
-    JMA expresses "程度以上" ("N or above") by putting the sentinel string `over` in
-    `to` and the real value in `from`, so `to` alone is not a usable value. This
-    applies to forecastMaxInt *and* forecastMaxLgInt, at both report and region
-    level - an unresolved `over` has no entry in any intensity colour/rank table
-    and renders as an unstyled literal "over".
-    """
+    The to="over" sentinel means "from or above"; use from in that case.
+    Applies to both intensity and long-period ground motion forecasts."""
     to = bounds.get('to')
     return bounds.get('from') if to == 'over' else to
 
@@ -334,15 +293,15 @@ def _extract_area_intensities(data):
         })
     return result
 
-# Mirrors INT_COLORS / INT_TEXT_DARK in public/app.js - keep the two in sync if the
-# app's intensity palette ever changes.
+# Keep this palette in sync with INT_COLORS / INT_TEXT_DARK in public/app.js.
 _MAP_INT_COLORS = {
     '0': (224, 224, 224), '1': (160, 216, 239), '2': (0, 0, 255), '3': (0, 204, 0),
     '4': (255, 255, 0), '5-': (255, 153, 0), '5+': (255, 102, 0), '6-': (255, 0, 0),
     '6+': (165, 0, 0), '7': (128, 0, 128),
 }
 _MAP_INT_TEXT_DARK = {'0', '1', '4', '5-'}
-_MAP_REGION_LABEL_DARK = {'1', '4'}  # the only fills light enough to need dark in-region labels
+# the only fills light enough to need dark in-region labels
+_MAP_REGION_LABEL_DARK = {'1', '4'}
 _MAP_UNAFFECTED_FILL = (28, 28, 28)
 _MAP_UNAFFECTED_OUTLINE = (51, 51, 51)
 _MAP_BACKGROUND = (15, 16, 18)
@@ -380,8 +339,9 @@ def _dist_to_polygon_boundary(x, y, poly):
     return min(_dist_to_segment(x, y, *poly[i], *poly[(i + 1) % n]) for i in range(n))
 
 def _polygon_label_point(poly):
-    """Approximate the polygon's 'pole of inaccessibility' via iterative grid search, so
-    region labels land inside the shape even for concave/irregular JMA region outlines."""
+    """Approximate the polygon's 'pole of inaccessibility' via iterative grid search,
+    so region labels land inside the shape even for concave/irregular JMA region
+    outlines."""
     xs, ys = [p[0] for p in poly], [p[1] for p in poly]
     minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
     fallback = ((minx + maxx) / 2, (miny + maxy) / 2)
@@ -420,7 +380,7 @@ def _quake_map_bounds(lat, lon, area_intensities):
             min_lon, max_lon = min(min_lon, r_min_lon), max(max_lon, r_max_lon)
             min_lat, max_lat = min(min_lat, r_min_lat), max(max_lat, r_max_lat)
     else:
-        # No per-region data (e.g. PLUM/VXSE47) - fall back to a fixed radius around the epicenter.
+        # Without region data (e.g. PLUM), use a fixed radius around the epicenter.
         min_lon, max_lon = lon - 1.2, lon + 1.2
         min_lat, max_lat = lat - 1.2, lat + 1.2
 
@@ -437,7 +397,8 @@ def _project(lon, lat, bounds, width, height):
     return x, y
 
 def _inset_bounds_and_size(max_w, max_h):
-    """Padded full-Japan bounds, sized to fit within max_w x max_h preserving aspect ratio."""
+    """Padded full-Japan bounds, sized to fit within max_w x max_h preserving aspect
+    ratio."""
     min_lon, min_lat, max_lon, max_lat = _JP_FULL_BOUNDS
     pad_lon = (max_lon - min_lon) * 0.05
     pad_lat = (max_lat - min_lat) * 0.05
@@ -499,7 +460,7 @@ def render_quake_map(output_data):
     max_int = output_data.get('max_int')
 
     min_lon, min_lat, max_lon, max_lat = _quake_map_bounds(lat, lon, area_intensities)
-    # Aspect-correct the longitude span so region shapes aren't stretched at this latitude.
+    # Correct longitude span for latitude to preserve region shapes.
     mean_lat_rad = math.radians((min_lat + max_lat) / 2)
     lon_scale = max(math.cos(mean_lat_rad), 0.1)
     width = 900
@@ -535,7 +496,7 @@ def render_quake_map(output_data):
             draw.text((lx - text_w / 2 - text_bbox[0], ly - text_h / 2 - text_bbox[1]),
                        region_int, fill=_map_region_label_color(region_int), font=region_label_font)
 
-    # Epicenter marker: white cross with a black halo for contrast, matching the app's own marker
+    # Match the app marker with a white cross and black halo.
     cx, cy = _project(lon, lat, bounds, width, height)
     cross_r = 13
     for x0, y0, x1, y1 in ((cx - cross_r, cy - cross_r, cx + cross_r, cy + cross_r),
@@ -567,30 +528,18 @@ def render_quake_map(output_data):
     return buf.getvalue()
 
 def _is_plum_report(data):
-    """True if this EEW report's hypocenter is a PLUM-derived hypothetical source.
+    """Identify a PLUM-derived hypothetical hypocenter via 仮定震源要素.
 
-    Per-region `isPlum` on intensity.regions[] only means that region's forecast
-    used the PLUM method as one contributing input alongside the normal grid
-    calculation - it is routinely true even for ordinary reports with a real
-    computed hypocenter, so it cannot be used as a report-level PLUM indicator.
-    The schema's actual report-level signal is `earthquake.condition`, which is
-    only present (set to "仮定震源要素") when the hypocenter/magnitude are
-    provisional placeholders because PLUM triggered before a real hypocenter
-    could be calculated.
-    """
+    Per-region isPlum flags also occur in ordinary reports and cannot identify
+    a report-level placeholder hypocenter."""
     condition = data.get('body', {}).get('body', {}).get('earthquake', {}).get('condition', '')
     return condition == '仮定震源要素'
 
 def _is_eew_canceled(data):
-    """True if this EEW telegram is a cancellation report (取消報) — JMA retracting
-    a previously issued warning/forecast, e.g. after a false trigger.
+    """Identify an EEW retraction before parsing normal earthquake fields.
 
-    Per the schema, `earthquake` and `intensity` are both omitted from a
-    cancellation report ("取消報の場合は出現しません"), so parsing one as a normal
-    report yields an Unknown epicenter with M0/0km/intensity 0. Left unchecked
-    that phantom was broadcast as a live card, pushed to every notification
-    channel as a fresh warning, and overwrote the genuine report it cancels.
-    """
+    Cancellations omit earthquake and intensity data; normal parsing would
+    create a phantom event instead of clearing the original warning."""
     return data.get('body', {}).get('body', {}).get('isCanceled', False) is True
 
 def _eew_cancel_output(data):
@@ -603,18 +552,15 @@ def _eew_cancel_output(data):
     return {'type': 'eew_clear', 'key': key, 'canceled': True}
 
 def _is_flash_report(data):
-    """True if this is a quick "flash" report with a hypocenter/magnitude but no
-    intensity forecast yet - the very first report for a quake before regional
-    intensity has been calculated. Distinct from `_is_plum_report`: the
-    hypocenter here is real, not a PLUM-derived placeholder.
+    """Identify an initial report with a real hypocenter but no intensity yet.
 
-    Cancellation reports also lack `intensity`, so `_is_eew_canceled` must be
-    checked first - otherwise a retraction renders as a flash report.
-    """
+    Check cancellation first: retractions also omit intensity. PLUM reports
+    have a hypothetical hypocenter and are classified separately."""
     return 'intensity' not in data.get('body', {}).get('body', {})
 
 def _extract_and_store_stations(event_id, data):
-    """Extract per-station intensities from a VXSE53 message and persist to quake_stations."""
+    """Extract per-station intensities from a VXSE53 message and persist to
+    quake_stations."""
     if not event_id:
         return
     intensity = data.get('body', {}).get('body', {}).get('intensity', {})
@@ -639,23 +585,23 @@ def _extract_and_store_stations(event_id, data):
         if changed:
             _invalidate_quake_points_index()
 
-volcanic_origin_event_ids = set() # event_ids identified as volcanic-eruption-triggered "distant earthquake" reports, not real earthquakes
+volcanic_origin_event_ids = set()  # Event IDs for eruption-triggered tsunami reports.
 
 def _is_volcanic_origin_report(data):
-    """VXSE53 reuses the "distant earthquake" (遠地地震に関する情報) template for tsunami
-    advisories triggered by a volcanic eruption rather than an earthquake, leaving magnitude/
-    depth unset. JMA's free-text comment is the only field that reliably says so (it explicitly
-    disclaims the auto-generated "large earthquake overseas" headline in this case)."""
+    """Detect volcanic events in the VXSE53 distant-earthquake template.
+
+    The free-text disclaimer identifies eruption-triggered tsunami advisories
+    whose auto-generated headline still describes an overseas earthquake."""
     free_text = data.get('body', {}).get('body', {}).get('comments', {}).get('free', '') or ''
     return '噴火' in free_text
 
 
-def process_data(data): # Extracts the relevant information from the data
+def process_data(data):
     output_data = {}
-    if data['head']['type'] == 'VXSE53': # Earthquake information (information regarding the epicenter and intensity)
-        epi_location_en = [eng_codes.regions.get(data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('code', ''), 'Unknown')] # translates the region code to English
-        epi_location_jp = [data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('name', 'Unknown')] # .get is used to avoid errors if the key is not present
-        report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp()) # converts the time to a Unix timestamp
+    if data['head']['type'] == 'VXSE53':  # Epicenter and observed intensity report.
+        epi_location_en = [eng_codes.regions.get(data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('code', ''), 'Unknown')]
+        epi_location_jp = [data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('name', 'Unknown')]
+        report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
         _origin_time_str = data.get('body', {}).get('body', {}).get('earthquake', {}).get('originTime', '')
         quake_time = int(datetime.fromisoformat(_origin_time_str or data.get('body', {}).get('targetDateTime', '')).timestamp())
         event_id = data.get('xmlReport', {}).get('head', {}).get('eventId', '')
@@ -674,7 +620,7 @@ def process_data(data): # Extracts the relevant information from the data
         magnitude = data.get('body', {}).get('body', {}).get('earthquake', {}).get('magnitude', {}).get('value', 0.0)
         depth = data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('depth', {}).get('value', 0)
         prefectures_en = [eng_codes.prefecture.get(data.get('body', {}).get('body', {}).get('intensity', {}).get('prefectures', [])[i].get('code', ''), 'Unknown') 
-                for i in range(len(data.get('body', {}).get('body', {}).get('intensity', {}).get('prefectures', [])))] # loops through all prefectures
+                for i in range(len(data.get('body', {}).get('body', {}).get('intensity', {}).get('prefectures', [])))]
         prefectures_jp = [data.get('body', {}).get('body', {}).get('intensity', {}).get('prefectures', [])[i].get('name', 'Unknown') 
                 for i in range(len(data.get('body', {}).get('body', {}).get('intensity', {}).get('prefectures', [])))]
         regions_en = [eng_codes.regions.get(data.get('body', {}).get('body', {}).get('intensity', {}).get('regions', [])[i].get('code', ''), 'Unknown') 
@@ -690,10 +636,9 @@ def process_data(data): # Extracts the relevant information from the data
         if is_volcanic and event_id:
             volcanic_origin_event_ids.add(event_id)
         elif event_id in volcanic_origin_event_ids:
-            # A later report for the same event (e.g. a revision) that no longer carries
-            # the volcanic disclaimer text still describes the same volcanic-origin event.
+            # Keep the volcanic classification when later revisions omit the disclaimer.
             is_volcanic = True
-        output_data = { # stores the data in a dictionary
+        output_data = {
             'type': 'earthquake',
             'event_id': event_id,
             'epi_location_en': epi_location_en,
@@ -720,7 +665,7 @@ def process_data(data): # Extracts the relevant information from the data
         output_data = _eew_cancel_output(data)
         dmdws.logger.info('Data (VXSE45 cancellation) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VXSE45': # Earthquake early warning (seismic motion forecast) (below 5- intensity)
+    elif data['head']['type'] == 'VXSE45':  # EEW forecast.
         epi_location_en = [eng_codes.regions.get(data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('code', ''), 'Unknown')]
         epi_location_jp = [data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('name', 'Unknown')]
         report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
@@ -766,7 +711,7 @@ def process_data(data): # Extracts the relevant information from the data
         output_data = _eew_cancel_output(data)
         dmdws.logger.info('Data (VXSE43 cancellation) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VXSE43': # PREDICTION - Earthquake early warning (warning) (5- and above)
+    elif data['head']['type'] == 'VXSE43':  # EEW warning.
         epi_location_en = [eng_codes.regions.get(data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('code', ''), 'Unknown')]
         epi_location_jp = [data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('name', 'Unknown')]
         report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
@@ -811,7 +756,7 @@ def process_data(data): # Extracts the relevant information from the data
         output_data = _eew_cancel_output(data)
         dmdws.logger.info('Data (VXSE47 cancellation) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VXSE47': # PREDICTION - Real-time seismic intensity only used for PLUM
+    elif data['head']['type'] == 'VXSE47':  # PLUM intensity prediction.
         epi_location_en = [eng_codes.regions.get(data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('code', ''), 'Unknown')]
         epi_location_jp = [data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('name', 'Unknown')]
         report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
@@ -851,7 +796,7 @@ def process_data(data): # Extracts the relevant information from the data
         }
         dmdws.logger.info('Data (VXSE47) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VXSE51': # Earthquake intensity report
+    elif data['head']['type'] == 'VXSE51':  # Earthquake intensity report
         max_int = data.get('body', {}).get('body', {}).get('intensity', {}).get('maxInt', 0)
         report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
         quake_time = int(datetime.fromisoformat(data.get('body', {}).get('targetDateTime', '')).timestamp())
@@ -877,7 +822,7 @@ def process_data(data): # Extracts the relevant information from the data
         }
         dmdws.logger.info('Data (VXSE51) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VXSE52': # Earthquake information (information about the epicenter)
+    elif data['head']['type'] == 'VXSE52':  # Epicenter report.
         epi_location_en = [eng_codes.regions.get(data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('code', ''), 'Unknown')]
         epi_location_jp = [data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('name', 'Unknown')]
         report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
@@ -886,7 +831,8 @@ def process_data(data): # Extracts the relevant information from the data
         event_id = data.get('xmlReport', {}).get('head', {}).get('eventId', '')
         magnitude = data.get('body', {}).get('body', {}).get('earthquake', {}).get('magnitude', {}).get('value', 0.0)
         depth = data.get('body', {}).get('body', {}).get('earthquake', {}).get('hypocenter', {}).get('depth', {}).get('value', 0)
-        if '0215' in data.get('body', {}).get('body', {}).get('comments', {}).get('forecast', {}).get('codes', []): # 0215 is the code for no tsunami
+        # 0215 is the code for no tsunami
+        if '0215' in data.get('body', {}).get('body', {}).get('comments', {}).get('forecast', {}).get('codes', []):
             no_tsunami = True
         else:
             no_tsunami = False
@@ -906,7 +852,7 @@ def process_data(data): # Extracts the relevant information from the data
         }
         dmdws.logger.info('Data (VXSE52) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VTSE41': # Tsunami warning/advisory/forecast
+    elif data['head']['type'] == 'VTSE41':  # Tsunami warning/advisory/forecast
         report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
         quake_time = int(datetime.fromisoformat(data.get('body', {}).get('targetDateTime', '')).timestamp())
         forecasts = _tsunami_forecasts_in_force(data)
@@ -946,7 +892,7 @@ def process_data(data): # Extracts the relevant information from the data
             output_data = {'type': 'tsunami_clear'}
         dmdws.logger.info('Data (VTSE41) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VTSE51': # Tsunami information
+    elif data['head']['type'] == 'VTSE51':  # Tsunami information
         report_time = int(datetime.fromisoformat(data.get('body', {}).get('reportDateTime', '')).timestamp())
         quake_time = int(datetime.fromisoformat(data.get('body', {}).get('targetDateTime', '')).timestamp())
         forecasts = _tsunami_forecasts_in_force(data)
@@ -994,7 +940,7 @@ def process_data(data): # Extracts the relevant information from the data
             output_data = {'type': 'tsunami_clear'}
         dmdws.logger.info('Data (VTSE51) processed at %s', time.time())
 
-    elif data['head']['type'] == 'VTSE52': # Offshore tsunami observation
+    elif data['head']['type'] == 'VTSE52':  # Offshore tsunami observation
         report_time = _safe_ts(data.get('body', {}).get('reportDateTime', '')) or int(time.time())
         observations = data.get('body', {}).get('body', {}).get('tsunami', {}).get('observations', [])
         obs_station_names = [o.get('name', '') for o in observations]
@@ -1004,8 +950,7 @@ def process_data(data): # Extracts the relevant information from the data
         obs_height_conditions = [o.get('maxHeight', {}).get('height', {}).get('condition', '') for o in observations]
         obs_height_over = [bool(o.get('maxHeight', {}).get('height', {}).get('over')) for o in observations]
         obs_conditions = [(o.get('firstHeight') or {}).get('condition', '') for o in observations]
-        # Offshore stations have no surveyed coordinates in the telegram itself;
-        # use approximate locations geocoded from the station names (see eng_codes).
+        # Telegrams omit coordinates; use surveyed or estimated locations in eng_codes.
         obs_locations = [eng_codes.offshore_station_coords.get(o.get('code', '')) for o in observations]
         obs_lats       = [loc[0] if loc else None for loc in obs_locations]
         obs_lons       = [loc[1] if loc else None for loc in obs_locations]
@@ -1033,13 +978,12 @@ def process_data(data): # Extracts the relevant information from the data
         dmdws.logger.info('Data type not recognised at %s', time.time())
     return output_data
 
-# will be called when a message is received
 def on_message(message: dict):
-    dmdws.logger.info(message['type']) # Type of the message ('start' or 'data') (you can ignore 'start' messages, they will happen on a new websocket connection)
+    dmdws.logger.info(message['type'])
     
     if message['type'] == 'data':
-        dmdws.logger.info(message['head']['type']) # Contains the code type ('VXSE53', etc)
-        dmdws.logger.info(message['body']) # Body of the message (contains the actual data)
+        dmdws.logger.info(message['head']['type'])
+        dmdws.logger.info(message['body'])
 
         try:
             output_data = process_data(message)
@@ -1047,7 +991,7 @@ def on_message(message: dict):
             dmdws.logger.error('process_data failed for %s: %s', message.get('head', {}).get('type', 'unknown'), e)
             return
 
-        # Get parsed data to clients as fast as possible, before any disk I/O or notifications
+        # Broadcast before disk writes or notifications can delay clients.
         store_recent_data(output_data, message)
         send_data_to_all_sockets(output_data)
         store_data(output_data, message)
@@ -1062,18 +1006,16 @@ def on_message(message: dict):
 _persist_seq = itertools.count()  # tie-breaker so same-instant messages can't collide
 
 def _persist_message(message: dict, output_data: dict):
-    # Second-precision names silently overwrote each other when telegrams
-    # arrived in the same second (common during EEW report sequences). The
-    # same stem is used for the raw and decoded file so they stay paired.
+    # Use a unique shared stem to pair raw and decoded files without overwrites.
     stem = f"{time.time():.6f}_{next(_persist_seq)}"
     output_path = os.path.join(BASE_DIR, 'data_messages', message['head']['type'], f"{stem}.json")
     with open(output_path, 'w', encoding='utf-8') as outfile:
-        json.dump(message, outfile, ensure_ascii=False, indent=4) # Save the raw data to a json file
+        json.dump(message, outfile, ensure_ascii=False, indent=4)
     dmdws.logger.info('Data saved at %s', time.time())
 
     output_path = os.path.join(BASE_DIR, 'decoded_messages', f"{stem}.json")
     with open(output_path, 'w', encoding='utf-8') as outfile:
-        json.dump(output_data, outfile, ensure_ascii=False, indent=4) # Save the processed data to a json file
+        json.dump(output_data, outfile, ensure_ascii=False, indent=4)
     dmdws.logger.info('Data saved at %s', time.time())
 
 def _persisted_file_ts(path):
@@ -1085,15 +1027,12 @@ def _persisted_file_ts(path):
         return None
 
 
-# Creating directories to save the data
 os.makedirs(os.path.join(BASE_DIR, 'data_messages'), exist_ok=True)
 os.makedirs(os.path.join(BASE_DIR, 'decoded_messages'), exist_ok=True)
 os.makedirs(os.path.join(BASE_DIR, 'logs'), exist_ok=True)
 for msg_type in ["VXSE43", "VXSE45", "VXSE47", "VXSE51", "VXSE52", "VXSE53", "VTSE41", "VTSE51", "VTSE52"]:
     os.makedirs(os.path.join(BASE_DIR, 'data_messages', msg_type), exist_ok=True)
 
-# Create the table if it doesn't exist
-# Create tables for each data type
 with db.Database() as cursor:
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS VXSE53 (
@@ -1251,10 +1190,8 @@ with db.Database() as cursor:
             value REAL
         )
     ''')
-    # Taiwan/CWA post-event reports - kept in their own tables rather than
-    # quake_epicenters/quake_stations, since those derive `timestamp` by
-    # parsing `event_id` as a JMA-format JST string; CWA's EarthquakeNo is a
-    # plain integer with its own OriginTime field, so there's no shared key.
+    # CWA reports use integer EarthquakeNo keys and explicit OriginTime values;
+    # JMA tables derive timestamps from JST event IDs, so keep them separate.
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS tw_quake_epicenters (
             earthquake_no INTEGER PRIMARY KEY,
@@ -1342,11 +1279,8 @@ def _store_epicenter(event_id, lat, lon):
     if changed:
         _invalidate_quake_points_index()
 
-# Backfill quake_stations and epicenters from previously saved message files.
-# Only files newer than the per-type high-water mark in backfill_meta are parsed,
-# so this stays cheap as data_messages grows instead of re-reading every file
-# ever saved on each startup. Anything arriving while it runs is covered by the
-# live store_data path (inserts are OR IGNORE, so overlap is harmless).
+# Backfill only files newer than each telegram type's saved high-water mark.
+# Live inserts use OR IGNORE, so overlap with incoming messages is harmless.
 def _backfill_stations():
     with db.Database() as cursor:
         cursor.execute('SELECT key, value FROM backfill_meta')
@@ -1378,18 +1312,15 @@ def _backfill_stations():
 threading.Thread(target=_backfill_stations, daemon=True).start()
 
 def store_data(output_data, data):
-    # Determine the table based on the type
     table_name = f"{data['head']['type'].upper()}"
 
-    # store_data dispatches on the telegram type, but a cancellation report carries
-    # no earthquake/intensity to store - inserting it would add an Unknown/M0/0km row.
+    # Cancellations omit earthquake data; storing them would create phantom events.
     if output_data.get('type') == 'eew_clear':
         dmdws.logger.info('Skipping %s insert for cancellation report', table_name)
         return
 
     dmdws.logger.info(f"Storing data in table: {table_name}")
 
-    # Insert the values into the corresponding table
     if table_name == 'VXSE53':
         with db.Database() as cursor:
             cursor.execute('''
@@ -1523,7 +1454,7 @@ def store_data(output_data, data):
 
 
 
-app = Flask('webquake') # Create a Flask app
+app = Flask('webquake')
 app.secret_key = SECRET_KEY
 app.permanent_session_lifetime = timedelta(days=7)
 app.config['COMPRESS_MIMETYPES'] = [
@@ -1531,19 +1462,16 @@ app.config['COMPRESS_MIMETYPES'] = [
     'application/javascript', 'application/json', 'application/manifest+json',
     'application/geo+json', 'image/svg+xml',
 ]
-# send_from_directory responses are streamed; include gzip alongside br/zstd for older clients
+# Include gzip alongside br/zstd for older clients receiving streamed files.
 app.config['COMPRESS_ALGORITHM_STREAMING'] = ['zstd', 'br', 'gzip', 'deflate']
 Compress(app)
 sock = Sock(app)
 
-open_sockets: set[WebsocketBase] = set() # Set of all open sockets
+open_sockets: set[WebsocketBase] = set()
 _socket_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix='ws-send')
 _bg_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='bg-task')
 
-# One requests.Session per thread: the pollers hit the same hosts continuously
-# (kmoni several times a second), and a bare requests.get pays DNS + TCP (+ TLS
-# for msil/jma/onesignal/ntfy) setup on every call. Sessions keep connections
-# alive; one per thread sidesteps any cross-thread pool sharing concerns.
+# Reuse HTTP connections per thread without sharing mutable Session state.
 _http_local = threading.local()
 
 def _http_session() -> requests.Session:
@@ -1556,27 +1484,18 @@ def _http_session() -> requests.Session:
 _HISTORY_THROTTLE_TYPES = {'nied_stations', 'nied_stations_diff', 'snet_stations', 'snet_stations_diff', 'exptech_stations', 'exptech_stations_diff'}
 _last_history_write: dict = {}  # msg_type -> last written ts, for throttled categories
 HISTORY_RETENTION_SECONDS = 48 * 3600
-# Live clients only ever get one full station snapshot (on connect) followed by
-# diffs. Replay state-reconstruction, however, has to replay every diff back to
-# the last full snapshot — so without periodic full snapshots, jumping deep into
-# the timeline meant merging tens of thousands of diffs (~16s). We record a full
-# snapshot to history (NOT broadcast) this often so reconstruction only ever
-# replays at most this many seconds of diffs.
+# Record periodic full snapshots for replay without broadcasting them.
+# This bounds reconstruction to one keyframe interval of station diffs.
 HISTORY_STATION_KEYFRAME_SECONDS = 300
 _last_station_keyframe: dict = {}  # msg_type -> ts of last recorded keyframe
 
-# Mirrors the last HISTORY_RETENTION_SECONDS of history_log in RAM so replay reads
-# (markers/gaps/window/state) don't hit SQLite, letting many concurrent replay
-# viewers be served without contending with the live write path or each other.
-# Set to False on memory-constrained servers to read straight from SQLite instead
-# (costs replay performance under concurrent load, but uses ~no extra RAM).
+# Serve replay reads from RAM to avoid contention with SQLite writes.
+# Disable this cache on memory-constrained servers.
 HISTORY_CACHE_ENABLED = True
 _history_cache = history_cache.HistoryCache()
 
 def _history_marker_for(data: dict):
-    # Returns (kind, label, event_ts) where event_ts is when the event actually
-    # occurred (for jumping the replay there), distinct from the history_log
-    # row's own ts (when the report was received).
+    # event_ts is the event's origin time; the history row ts is its receipt time.
     if data.get('type') == 'earthquake':
         max_int = data.get('max_int')
         if max_int and max_int != '0':
@@ -1611,7 +1530,7 @@ def _record_history(data: dict, json_data: str):
         _history_cache.add(now, msg_type, json_data, marker_kind, marker_label, event_ts)
 
 def send_data_to_all_sockets(data: dict):
-    json_data = json.dumps(data, separators=(',', ':')) # Convert the data to a JSON string
+    json_data = json.dumps(data, separators=(',', ':'))
     _bg_executor.submit(_record_history, data, json_data)
     for ws in open_sockets.copy():
         _socket_executor.submit(send_data, ws, json_data)
@@ -1629,11 +1548,11 @@ def _maybe_record_station_keyframe(msg_type: str, stations: list):
 
 def send_jst_time():
     while True:
-        jst_time = time.strftime('%Y/%m/%d %H:%M:%S JST', time.localtime(time.time() + 9 * 3600)) # Get the current JST time
+        jst_time = time.strftime('%Y/%m/%d %H:%M:%S JST', time.localtime(time.time() + 9 * 3600))
         send_data_to_all_sockets({'jst_time': jst_time})
-        time.sleep(1) # Send the time every second
+        time.sleep(1)
 
-threading.Thread(target=send_jst_time, daemon=True).start() # Start the thread to send the JST time
+threading.Thread(target=send_jst_time, daemon=True).start()
 
 # --- 48h history log: heartbeat (for gap detection) + pruning ---
 def _history_heartbeat_loop():
@@ -1701,7 +1620,7 @@ KMONI_REALTIME = "http://www.kmoni.bosai.go.jp/data/map_img/RealTimeImg/jma_s/{d
 KMONI_PGA      = "http://www.kmoni.bosai.go.jp/data/map_img/RealTimeImg/acmap_s/{date}/{ts}.acmap_s.gif"
 KMONI_BOREHOLE = "http://www.kmoni.bosai.go.jp/data/map_img/RealTimeImg/jma_b/{date}/{ts}.jma_b.gif"
 
-_prev_nied: dict = {}   # code -> (int_str, raw_float, pga_or_None)
+_prev_nied: dict = {}  # code -> (int_str, raw_float, pga_or_None)
 _last_nied_full: list = []
 
 _nied_stations_path = os.path.join(BASE_DIR, 'nied_stations.json')
@@ -1786,16 +1705,15 @@ def _fetch_gif(url, timeout=3):
         pass
     return None
 
-# Dedicated pool so the pga and borehole fetches in poll_nied_pga run
-# concurrently instead of paying two sequential round-trips per cycle.
-# Workers are persistent, so each keeps its own _http_session alive.
+# Fetch PGA and borehole images concurrently with persistent HTTP sessions.
 _nied_fetch_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='nied-fetch')
 
 # Latest jma_s result shared between the two NIED polling threads.
 # Written by poll_nied_jma, read by poll_nied_pga.
 # Tuple assignment is atomic in CPython so no lock needed.
 _nied_jma_state = None  # (ts, date, img) or None
-_nied_latest_ts = 0     # highest successfully fetched ts as int; prevents backward time travel
+# highest successfully fetched ts as int; prevents backward time travel
+_nied_latest_ts = 0
 
 def _nied_decode_and_send(img, img_pga, img_borehole=None):
     global _prev_nied, _last_nied_full
@@ -1803,9 +1721,7 @@ def _nied_decode_and_send(img, img_pga, img_borehole=None):
     stations_out = []
     changed = []
     current_codes = set()
-    # Vectorised pixel gather: one fancy-index per image + a bulk .tolist()
-    # (native Python ints) replaces ~3 PIL getpixel() calls per station — over
-    # 1600 stations every cycle this was the dominant cost in the NIED thread.
+    # Gather all station pixels in NumPy to avoid per-station PIL calls.
     pix = np.asarray(img)[NIED_PY, NIED_PX].tolist()
 
     def _gather(im):
@@ -1848,7 +1764,8 @@ def _nied_decode_and_send(img, img_pga, img_borehole=None):
         del _prev_nied[code]
     _last_nied_full = stations_out
     if is_first:
-        _last_station_keyframe['nied_stations'] = time.time()  # the connect snapshot is the first keyframe
+        # the connect snapshot is the first keyframe
+        _last_station_keyframe['nied_stations'] = time.time()
         send_data_to_all_sockets({'type': 'nied_stations', 'stations': stations_out})
     else:
         _maybe_record_station_keyframe('nied_stations', stations_out)
@@ -1858,9 +1775,7 @@ def _nied_decode_and_send(img, img_pga, img_borehole=None):
 def poll_nied_jma():
     global _nied_jma_state, _nied_latest_ts
     while True:
-        # NIED publishes each frame ~2-4s after its timestamp, so the newest
-        # one or two seconds are normally 404. Only log when every attempt in a
-        # cycle fails (a genuine outage), not on each expected miss.
+        # NIED frames lag their timestamps by ~2–4s. Log only if every attempt fails.
         got = False
         tried_ts = None
         for delta in range(6):
@@ -1909,7 +1824,6 @@ def poll_nied_pga():
 
 threading.Thread(target=poll_nied_jma, daemon=True).start()
 threading.Thread(target=poll_nied_pga, daemon=True).start()
-# --- end NIED kmoni polling ---
 
 # --- S-net (MSIL smoni) polling ---
 SNET_TIMES_URL = "https://www.msil.go.jp/data/tiles/smoni/targetTimes.json"
@@ -1951,7 +1865,8 @@ def _snet_decode_and_send(img12, img11):
         del _prev_snet[code]
     _last_snet_full = stations_out
     if is_first:
-        _last_station_keyframe['snet_stations'] = time.time()  # the connect snapshot is the first keyframe
+        # the connect snapshot is the first keyframe
+        _last_station_keyframe['snet_stations'] = time.time()
         send_data_to_all_sockets({'type': 'snet_stations', 'stations': stations_out})
     else:
         _maybe_record_station_keyframe('snet_stations', stations_out)
@@ -1987,15 +1902,10 @@ def poll_snet():
         time.sleep(10)
 
 threading.Thread(target=poll_snet, daemon=True).start()
-# --- end S-net polling ---
 
 # --- Taiwan: ExpTech TREM-Net live stations + live EEW, CWA earthquake reports ---
-# ExpTech (community sensor network, not an official source - see the "ExpTech"/
-# "TREM-Net" attribution badge in app.js) exposes REST endpoints, load-balanced
-# across lb-1..lb-4.exptech.dev, no auth required. Schemas below were confirmed
-# from ExpTech's own published @exptechtw/api-wrapper TypeScript types
-# (RtsStation.{pga,pgv,i,I,alert}; Eew.{author,id,serial,status,final,eq:{time,
-# lat,lon,depth,mag,loc,max}}), not guessed.
+# ExpTech provides community TREM-Net stations and EEW via load-balanced hosts.
+# Payload fields follow the published @exptechtw/api-wrapper types.
 EXPTECH_HOSTS = ['lb-1.exptech.dev', 'lb-2.exptech.dev', 'lb-3.exptech.dev', 'lb-4.exptech.dev']
 _exptech_host_idx = 0
 
@@ -2019,10 +1929,7 @@ with open(_tw_stations_path, encoding='utf-8') as _f:
     TW_STATIONS = json.load(_f)
 _tw_station_lookup = {s['code']: s for s in TW_STATIONS}
 
-# Continuous 0-9 real-time intensity index -> the same '0'..'7'/'5-'/'5+'
-# bucket labels JMA's shindo scale uses. Confirmed directly from ExpTech's own
-# client code (a 10-entry table keyed 0-9 with these exact labels) - `i`/`I`
-# are pre-scaled onto this same 0-9 domain, so rounding is the whole mapping.
+# ExpTech i/I values use a 0–9 intensity index; round to the matching JMA class.
 _TW_INT_LABELS = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7']
 
 def _tw_intensity_label(i):
@@ -2051,7 +1958,7 @@ def poll_exptech_rts():
                 for code, st in data['station'].items():
                     info = _tw_station_lookup.get(code)
                     if not info:
-                        continue  # station not in our vendored metadata - skip rather than guess a position
+                        continue  # No known station coordinates.
                     label = _tw_intensity_label(st.get('i'))
                     if label is None:
                         continue
@@ -2082,13 +1989,11 @@ def poll_exptech_rts():
 
 threading.Thread(target=poll_exptech_rts, daemon=True).start()
 
-# Live Taiwan EEW - CWA's own real-time EEW is cell-broadcast only (no public
-# feed), so this is the only continuous live source, same as the rts stations
-# above. Kept as its own recent/timer state, parallel to recent_earthquake_data,
-# since the payload shape (nested eq.*, status codes, string id) is unrelated.
-recent_tw_eew_data: dict = {}   # {id: payload}
+# Track Taiwan EEW separately: its nested ExpTech payload differs from JMA.
+recent_tw_eew_data: dict = {}  # {id: payload}
 _tw_eew_clear_timers: dict = {}
-_prev_tw_eew_state: dict = {}   # {id: (serial, status, final)} - dedupes unchanged re-polls
+# {id: (serial, status, final)} - dedupes unchanged re-polls
+_prev_tw_eew_state: dict = {}
 
 def clear_recent_tw_eew_data(key):
     global recent_tw_eew_data, _prev_tw_eew_state
@@ -2110,7 +2015,8 @@ def poll_exptech_eew():
                         continue
                     key = eew.get('id')
                     status = eew.get('status')
-                    if not key or status == 3:  # EewStatus.Test - never surface to users
+                    # EewStatus.Test - never surface to users
+                    if not key or status == 3:
                         continue
                     if status == 2:  # EewStatus.Cancel
                         if key in recent_tw_eew_data:
@@ -2118,9 +2024,11 @@ def poll_exptech_eew():
                         continue
                     state = (eew.get('serial'), status, eew.get('final'))
                     if _prev_tw_eew_state.get(key) == state:
-                        continue  # unchanged since the last poll - nothing new to broadcast
+                        # unchanged since the last poll - nothing new to broadcast
+                        continue
                     _prev_tw_eew_state[key] = state
-                    payload = {**eew, 'type': 'tw_eew'}  # ExpTech's own payload says type:'eew'; app.js expects 'tw_eew'
+                    # Rename the upstream eew type for our dispatcher.
+                    payload = {**eew, 'type': 'tw_eew'}
                     recent_tw_eew_data[key] = payload
                     with _timers_lock:
                         old = _tw_eew_clear_timers.get(key)
@@ -2137,20 +2045,9 @@ def poll_exptech_eew():
 
 threading.Thread(target=poll_exptech_eew, daemon=True).start()
 
-# Official CWA post-event earthquake reports (E-A0015-001, "有感地震報告").
-# Schema below (records.Earthquake[].{EarthquakeNo,EarthquakeInfo.{OriginTime,
-# Epicenter.{Location,EpicenterLatitude,EpicenterLongitude},FocalDepth,
-# EarthquakeMagnitude.MagnitudeValue},Intensity.ShakingArea[].EqStation[].
-# {StationID,StationName,StationLatitude,StationLongitude,SeismicIntensity}})
-# is CWA's publicly documented opendata format, not fetched live - CWA's docs
-# endpoint was down and there's no way to hit the real API without a personal
-# key (WEBQUAKE_CWA_API_KEY). Field names below were verified against a real
-# response (fetched with the user's key): OriginTime is actually full ISO8601
-# with an explicit offset, e.g. "2026-08-27T05:47:20+08:00" - parse with
-# fromisoformat, NOT as a naive "yyyy-MM-dd HH:mm:ss" string (an earlier,
-# unverified assumption here was wrong). SeismicIntensity/AreaIntensity use
-# "N級" for levels 0-4/7 (e.g. "3級") and bare "5弱"/"5強"/"6弱"/"6強" for 5/6
-# (also verified live) - see _TW_CWA_INT_MAP.
+# Official CWA reports: E-A0015-001 (有感地震報告).
+# OriginTime is ISO 8601 with an explicit offset. Intensity strings use N級
+# for 0–4/7 and bare 5弱/5強/6弱/6強; see _TW_CWA_INT_MAP.
 recent_tw_quake_data = None
 _tw_quake_clear_timer = None
 _cwa_seen_earthquake_nos: set = set()
@@ -2160,13 +2057,8 @@ _TW_CWA_INT_MAP = {
     '5弱': '5-', '5強': '5+', '6弱': '6-', '6強': '6+', '7級': '7',
 }
 
-# CWA's opendata API has no English variant of the free-text Location field
-# and there's no fixed code table to translate against (unlike JMA's
-# eng_codes.py) since it's dynamically composed prose, e.g.
-# "臺東縣政府東北東方  21.3  公里 (位於臺灣東南部海域)". This is a regex parse of
-# CWA's fairly consistent "{county}政府{direction}方 {distance} 公里
-# (位於{area})" template, not a lookup - falls back to the raw Chinese text
-# whenever a piece doesn't match a known pattern, rather than guessing.
+# Translate CWA's free-text Location template: county, direction and distance,
+# then an optional area. Preserve Chinese text when a pattern is unrecognised.
 _TW_COUNTY_EN = {
     '臺北市': 'Taipei City', '新北市': 'New Taipei City', '桃園市': 'Taoyuan City',
     '臺中市': 'Taichung City', '臺南市': 'Tainan City', '高雄市': 'Kaohsiung City',
@@ -2241,19 +2133,15 @@ def _store_tw_quake(earthquake_no, lat, lon, depth, magnitude, location, station
                 [(earthquake_no, s['code'], s.get('name', ''), s['lat'], s['lon'], s['int']) for s in stations]
             )
 
-# Powers the "Earthquake History" sidebar's Taiwan entries (app.js's
-# tw_history handler), mirroring recent_jma_history's role for JMA - newest
-# first, capped, re-broadcast in full on every new report (CWA reports are
-# infrequent enough that this is cheap, unlike the per-second station feeds).
+# Keep the newest CWA reports for the sidebar and broadcast the full list
+# when a report arrives, matching recent_jma_history.
 recent_tw_history: list = []
 _TW_HISTORY_CAP = 40
 
 def _load_tw_history():
-    """Seeds recent_tw_history from SQLite at startup so a restart doesn't
-    empty the sidebar until the next CWA report arrives. _SHINDO_RANK is
-    defined later in this file but that's fine - it's only looked up when
-    this function actually runs (from poll_cwa_reports's background thread,
-    after the whole module has finished loading), not at def time."""
+    """Seed Taiwan sidebar history from SQLite before the next CWA poll.
+
+    _SHINDO_RANK is resolved when the polling thread calls this after startup."""
     global recent_tw_history
     try:
         with db.Database() as cursor:
@@ -2295,7 +2183,7 @@ def poll_cwa_reports():
                 for rec in records:
                     eq_no = rec.get('EarthquakeNo')
                     if eq_no is None or eq_no in _cwa_seen_earthquake_nos:
-                        continue  # CWA publishes each report once - no revision staging like JMA's VXSE51->52->53
+                        continue  # Already processed this report.
                     _cwa_seen_earthquake_nos.add(eq_no)
                     info = rec.get('EarthquakeInfo', {}) or {}
                     epi = info.get('Epicenter', {}) or {}
@@ -2371,9 +2259,9 @@ def poll_cwa_reports():
         time.sleep(20)
 
 threading.Thread(target=poll_cwa_reports, daemon=True).start()
-# --- end Taiwan polling ---
 
-recent_earthquake_data = {}   # {key: output_data} — key is str(origin_time or quake_time)
+# {key: output_data} — key is str(origin_time or quake_time)
+recent_earthquake_data = {}
 recent_tsunami_data = None
 recent_offshore_obs_data = None
 recent_past_quake_data = None
@@ -2381,7 +2269,7 @@ recent_jma_history = None
 _past_quake_clear_timer = None
 _tsunami_clear_timer = None
 _offshore_obs_clear_timer = None
-_eew_clear_timers = {}        # {key: threading.Timer}
+_eew_clear_timers = {}  # {key: threading.Timer}
 _timers_lock = threading.Lock()
 _jma_history_top = None
 
@@ -2393,24 +2281,17 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     return 2 * R * math.asin(math.sqrt(a))
 
-# JMA hypocenter codes "900" (Around Taiwan) and "901" (East China Sea) mean
-# JMA itself considers the epicenter to be at/around Taiwan, not genuine
-# Japanese territory - unlike the 850-860 Okinawa/Miyako/Ishigaki/Yonaguni
-# offshore codes, which stay pure JMA even though they're geographically
-# close to Taiwan. Only reports with one of these two codes get checked
-# against CWA's own reports at all.
+# Only match Around Taiwan (900) and East China Sea (901) reports to CWA.
+# Nearby Okinawa-region codes remain separate JMA events.
 _TW_MATCH_HYPOCENTER_CODES = {'900', '901'}
 _TW_MATCH_TIME_WINDOW_S = 180
 _TW_MATCH_DIST_KM = 100
 
 def _find_matching_tw_report(output_data):
-    """Best-effort match of a JMA post-event report (VXSE51/52/53, hypocenter
-    code 900/901) against a recently-received CWA report, by time (+-180s of
-    origin) and space (<100km haversine). Directional only - checked from the
-    JMA side against CWA reports already in recent_tw_history, not the other
-    way around, so a CWA report that lands after this JMA telegram won't
-    retroactively be matched. Acceptable per the plan: an unmatched pair just
-    falls back to showing both independently, same as before this existed."""
+    """Match a Taiwan-area JMA report to cached CWA data within 180s and 100km.
+
+    Only CWA reports already in recent_tw_history are considered. A later CWA
+    arrival does not retroactively merge an unmatched pair."""
     lat, lon = output_data.get('lat'), output_data.get('lon')
     ts = output_data.get('quake_time')
     if lat is None or lon is None or ts is None:
@@ -2445,9 +2326,8 @@ def store_recent_data(output_data, data):
             _eew_clear_timers[key] = timer
         timer.start()
     elif output_data['type'] == 'eew_clear':
-        # JMA cancelled this EEW - drop the cached report and its pending 120s
-        # auto-clear. on_message broadcasts this payload itself, so don't route
-        # through clear_recent_earthquake_data (it would re-broadcast).
+        # Cancel the cached EEW and timer. on_message broadcasts the clear payload;
+        # calling clear_recent_earthquake_data here would broadcast it twice.
         key = output_data.get('key')
         recent_earthquake_data.pop(key, None)
         with _timers_lock:
@@ -2469,9 +2349,8 @@ def store_recent_data(output_data, data):
     elif output_data['type'] == 'tsunami':
         recent_tsunami_data = output_data
         dmdws.logger.info('Recent tsunami data stored')
-        # Advisories/warnings remain in effect until JMA cancels them (a later telegram
-        # carrying validDateTime); issuance telegrams omit validDateTime, so only schedule
-        # an auto-clear when JMA actually gives an end time, instead of guessing one.
+        # Only schedule expiry when JMA provides validDateTime; issuance reports
+        # can omit it while the warning remains in force.
         valid_ts = _safe_ts(data.get('body', {}).get('validDateTime'))
         with _timers_lock:
             if _tsunami_clear_timer is not None:
@@ -2499,10 +2378,10 @@ def store_recent_data(output_data, data):
         if hypo_code in _TW_MATCH_HYPOCENTER_CODES:
             match = _find_matching_tw_report(output_data)
             if match:
-                output_data['matched_tw'] = match  # mutated in place - rides along on the send_data_to_all_sockets call right after this
+                # Include the match in the next broadcast.
+                output_data['matched_tw'] = match
                 dmdws.logger.info('JMA report matched to CWA earthquake_no=%s (hypocenter code %s)', match['earthquake_no'], hypo_code)
-        # If this is a later telegram for the same event (e.g. VXSE52 after VXSE53), preserve
-        # any intensity fields the new telegram omits — VXSE52 has no max_int/regions/prefectures.
+        # Preserve intensity fields when a later epicenter-only VXSE52 omits them.
         if recent_past_quake_data and recent_past_quake_data.get('event_id') == output_data.get('event_id'):
             merged = {**recent_past_quake_data, **output_data}
             for field in ('max_int', 'max_lpgm', 'prefectures_en', 'prefectures_jp',
@@ -2555,7 +2434,7 @@ def clear_recent_past_quake_data():
     send_data_to_all_sockets({'type': 'past_quake_clear'})
     dmdws.logger.info('Recent past quake data cleared')
 
-_qpi_cache = None          # cached result of _compute_quake_points_index()
+_qpi_cache = None  # cached result of _compute_quake_points_index()
 _qpi_lock = threading.Lock()
 
 def _invalidate_quake_points_index():
@@ -2565,10 +2444,7 @@ def _invalidate_quake_points_index():
     _qpi_cache = None
 
 def _build_quake_points_index():
-    """Cached accessor. The underlying query (a LEFT JOIN with a DISTINCT
-    subquery + per-row timestamp parsing) used to run on every client connect
-    and every VXSE52/53; the result only changes when new quake data is stored,
-    so cache it and invalidate on insert instead."""
+    """Return the quake-point index, cached until new quake data is inserted."""
     global _qpi_cache
     with _qpi_lock:
         if _qpi_cache is None:
@@ -2655,10 +2531,7 @@ def poll_jma_quake_history():
                     if q.get('ctt') in volcanic_origin_event_ids:
                         q['is_volcanic'] = True
                 top_at = deduped[0].get('at') if deduped else None
-                # Re-broadcast/cache not just when a new quake appears, but whenever any
-                # entry's maxi changes (e.g. JMA or our station fallback fills it in on a
-                # later poll) — otherwise a quake first seen with maxi '0' stays stuck at
-                # '?' in every client's cache/reload until a newer quake bumps the list.
+                # Broadcast late maxi updates even when no new quake appears.
                 changed = top_at != _jma_history_top or (
                     recent_jma_history is not None and
                     {q.get('at'): q.get('maxi') for q in deduped} !=
@@ -2713,7 +2586,7 @@ def _fmt_magnitude(magnitude):
         m = float(magnitude)
     except (TypeError, ValueError):
         return None
-    if m != m or m <= 0: # NaN or unknown
+    if m != m or m <= 0:  # NaN or unknown
         return None
     return f"M{m:.1f}"
 
@@ -2722,12 +2595,13 @@ def _fmt_depth(depth):
         d = float(depth)
     except (TypeError, ValueError):
         return None
-    if d != d or d <= 0: # NaN or unknown
+    if d != d or d <= 0:  # NaN or unknown
         return None
     return f"{int(round(d))}km"
 
 def _format_quake_alert(output_data, location_en, location_ja, max_intensity):
-    """Builds richer EN/JA notification bodies: location, magnitude, depth, max intensity."""
+    """Builds richer EN/JA notification bodies: location, magnitude, depth, max
+    intensity."""
     mag = _fmt_magnitude(output_data.get('magnitude'))
     depth = _fmt_depth(output_data.get('depth'))
 
@@ -2748,7 +2622,7 @@ def _format_quake_alert(output_data, location_en, location_ja, max_intensity):
 
 def send_alert(output_data):
     global _last_warning_time, _last_forecast_time
-    warning = output_data.get('warning', False) # Check if the data is a warning
+    warning = output_data.get('warning', False)
 
     if warning == True:
         location_en = _first_or(output_data.get('epi_location_en'))
@@ -2756,7 +2630,7 @@ def send_alert(output_data):
         max_intensity = output_data.get('max_int', 'Unknown')
         body_en, body_ja = _format_quake_alert(output_data, location_en, location_ja, max_intensity)
         current_time = time.time()
-        if _last_warning_time is None or current_time - _last_warning_time > 10: # Send the notification if it has been more than 10 seconds since the last one
+        if _last_warning_time is None or current_time - _last_warning_time > 10:
             send_notification(
                 "Earthquake Early Warning", "緊急地震速報",
                 body_en,
@@ -2782,7 +2656,8 @@ def send_alert(output_data):
             dmdws.logger.info('Earthquake warning notification not sent as it has been less than 10 seconds since the last one')
 
     elif output_data['type'] == 'earthquake' and warning == False:
-        is_forecast = 'last_report' in output_data # EEW (VXSE45); post-event (VXSE51/52/53) has no last_report
+        # EEW (VXSE45); post-event (VXSE51/52/53) has no last_report
+        is_forecast = 'last_report' in output_data
         location_en = _first_or(output_data.get('epi_location_en'))
         location_ja = _first_or(output_data.get('epi_location_jp'))
         max_intensity = output_data.get('max_int', 'Unknown')
@@ -2815,7 +2690,7 @@ def send_alert(output_data):
         else:
             dmdws.logger.info('Earthquake %s notification not sent as it has been less than 10 seconds since the last one', 'forecast' if is_forecast else 'information')
 
-    elif output_data['type'] == 'tsunami': # Tsunami notifications are always sent
+    elif output_data['type'] == 'tsunami':  # Tsunami notifications are always sent
         send_notification(
             "Tsunami Information", "津波情報",
             "New Tsunami Information issued. Open WebQuake for more details.",
@@ -2851,22 +2726,14 @@ def send_alert(output_data):
 
 def send_data(ws: WebsocketBase, data: str):
     if ws.connected:
-        try: # Try to send the data
+        try:
             ws.send(data)
             return
         except Exception:
-            pass # If the send fails, the socket is likely closed
+            pass  # If the send fails, the socket is likely closed
 
-    open_sockets.discard(ws) # Remove the socket from the set if it is closed
+    open_sockets.discard(ws)
     
- #   def console_send_data():
-  #      while True:
-   #         command = input("Type 'send' to send data through the websocket: ")
-    #        if command.lower() == 'send':
-     #           data = input("Enter the data to send: ")
-      #          send_data_to_all_sockets(json.loads(data))
-#
- #   threading.Thread(target=console_send_data, daemon=True).start()
 
 _public = os.path.join(BASE_DIR, '..', 'public')
 
@@ -2887,7 +2754,7 @@ def quake_points(event_id):
 
 @app.route('/api/quake_points_near/<int:ts>')
 def quake_points_near(ts):
-    # Find the closest event in quake_epicenters (by stored unix timestamp) that also has station data
+    # Find the nearest event timestamp with stored station data.
     with db.Database() as cursor:
         cursor.execute(
             'SELECT qe.event_id, abs(qe.timestamp - ?) as diff '
@@ -3010,24 +2877,18 @@ def _keyframes_for_gap(msg_type, diff_type, base_ts, end_ts):
     return out
 
 def _backfill_station_keyframes(msg_type, diff_type):
-    """Synthesise full-snapshot keyframes wherever there's a >KEYFRAME gap between
-    existing full snapshots, so reconstruction never replays more than KEYFRAME
-    seconds of diffs — even for history recorded before keyframing existed (e.g. a
-    long run that only sent one full snapshot at start).
+    """Fill gaps larger than KEYFRAME between full station snapshots.
 
-    Only diffs inside an oversized gap are parsed, so after the first run (which
-    fills the whole window) every subsequent restart finds the snapshots already
-    dense and does almost no work. Idempotent: synthesised keyframes are full
-    snapshots themselves, so they shrink the gaps that trigger this."""
+    Parse only diffs inside oversized gaps. Synthesised snapshots shrink those
+    gaps, making later startup passes idempotent and inexpensive."""
     if not _history_cache_ready():
         return 0
     now = time.time()
     full_ts = [ts for ts, _p in _history_cache.rows_before(msg_type, now, ascending=True)]
     if not full_ts:
         return 0  # no full snapshot to anchor from; diffs alone can't be reconstructed
-    # Walk each region between consecutive full snapshots (and the trailing region
-    # up to now); only those wider than KEYFRAME need filling. We don't synthesise
-    # before the first full snapshot — diffs alone can't be reconstructed.
+    # Fill oversized gaps between full snapshots, including the trailing gap.
+    # Diffs before the first snapshot cannot be reconstructed.
     inserts = []
     boundaries = full_ts + [now]
     for base_ts, end_ts in zip(full_ts, boundaries[1:]):
@@ -3109,8 +2970,9 @@ def _history_latest_single(msg_type, clear_types, at):
         return None
 
 def _history_latest_past_quake(at):
-    """Latest post-event earthquake report (VXSE51/52/53, i.e. no 'last_report' field)
-    as of `at`, or None if it has since been cleared (matches recent_past_quake_data)."""
+    """Latest post-event earthquake report (VXSE51/52/53, i.e. no 'last_report'
+    field) as of `at`, or None if it has since been cleared (matches
+    recent_past_quake_data)."""
     rows = _history_rows_before('earthquake', at, ascending=False)
     clear_ts = _history_max_ts('past_quake_clear', at)
     for ts, payload in rows:
@@ -3139,7 +3001,8 @@ def _history_active_eews(at):
         if 'last_report' not in data:
             continue
         key = data.get('event_id') or str(data.get('origin_time') or data.get('quake_time') or '')
-        latest_by_key[key] = (ts, data)  # ascending order: last write wins = latest report
+        # ascending order: last write wins = latest report
+        latest_by_key[key] = (ts, data)
     last_clear_ts = {}
     for ts, payload in clear_rows:
         try:
@@ -3252,7 +3115,8 @@ def history_window():
     now = time.time()
     ts_from = _parse_ts_param('from', now - 600)
     ts_to = _parse_ts_param('to', now)
-    if ts_to - ts_from > 1800:  # cap one request's span so a client can't pull the whole day at once
+    # cap one request's span so a client can't pull the whole day at once
+    if ts_to - ts_from > 1800:
         ts_to = ts_from + 1800
     try:
         limit = min(int(request.args.get('limit', 2000)), 2000)
@@ -3268,9 +3132,7 @@ def history_window():
                 (ts_from, ts_to, limit)
             )
             rows = cursor.fetchall()
-    # Payloads are stored as the exact JSON text that was broadcast, so splice
-    # them into the response as-is — json.loads + re-dumps of up to 2000 rows
-    # (station snapshots make that megabytes) was most of this endpoint's cost.
+    # Splice stored JSON directly to avoid decoding and re-encoding large snapshots.
     parts = ['{"ts":%s,"data":%s}' % (json.dumps(ts), payload)
              for ts, payload in rows if payload and payload[0] in '{[']
     return '{"messages":[' + ','.join(parts) + ']}'
@@ -3310,9 +3172,7 @@ TEST_NOTIFICATIONS = {
     },
 }
 
-# Failed admin logins are throttled per client IP. There is a single shared
-# password and no account lockout to fall back on, so without this the panel is
-# open to anyone willing to spend an afternoon guessing.
+# Rate-limit failed logins per IP for the shared admin password.
 _LOGIN_MAX_FAILURES = 5
 _LOGIN_WINDOW_SECONDS = 300
 _LOGIN_LOCKOUT_SECONDS = 900
@@ -3338,8 +3198,7 @@ def _login_lockout_remaining(ip):
 def _record_login_failure(ip):
     now = time.time()
     with _login_failures_lock:
-        # Drop stale entries so a distributed guessing run cannot grow this dict
-        # without bound.
+        # Drop stale login failures to bound memory use across client IPs.
         if len(_login_failures) > 1024:
             for stale_ip, (_, stale_stamp) in list(_login_failures.items()):
                 if now - stale_stamp > _LOGIN_LOCKOUT_SECONDS:
@@ -3392,9 +3251,7 @@ def admin_login_submit():
 
     data = request.get_json(silent=True) or {}
     supplied = data.get('password')
-    # compare_digest rather than == so the response time does not leak how many
-    # leading characters of the password were correct. Both sides are encoded
-    # because the str form of compare_digest rejects non-ASCII passwords.
+    # Use constant-time comparison; UTF-8 bytes also support non-ASCII passwords.
     if isinstance(supplied, str) and secrets.compare_digest(
         supplied.encode('utf-8'), ADMIN_PASSWORD.encode('utf-8')
     ):
@@ -3443,9 +3300,7 @@ def admin_status():
         })
     cache_stats = _history_cache.stats()
     if _history_cache_ready():
-        # The cache already tracks count/size/span incrementally; avoid the
-        # full-table SUM(LENGTH(...)) scan below, which is what made this
-        # endpoint expensive when polled every 5s from the admin page.
+        # Use incremental cache stats to avoid a full-table scan on every admin poll.
         history_log_count = cache_stats['row_count']
         history_log_oldest = cache_stats['oldest_ts']
         history_log_newest = cache_stats['newest_ts']
@@ -3547,7 +3402,7 @@ def admin_test_ntfy_notification():
         'ja': result_ja,
     })
 
-# Sample Kumamoto-region quake used to exercise the map-image render on the warning/forecast test buttons
+# Sample Kumamoto quake for warning/forecast map-image tests.
 _TEST_QUAKE_MAP_SAMPLE = {
     'lat': 32.507, 'lon': 130.686, 'max_int': '5-',
     'area_intensities': [{'code': '741', 'max_int': '5-'}],
@@ -3570,15 +3425,13 @@ def admin_test_discord_notification():
         'ja': result_ja,
     })
 
-# --- end admin panel ---
 
 _LONG_CACHE_EXTS = ('.geojson', '.mp3', '.png', '.ico', '.webmanifest', '.woff', '.woff2')
 
 _index_cache: dict = {}  # lang -> {'key': (mtimes), 'html': str}
 _index_lock = threading.Lock()
 
-# Per-language <head> overrides applied on top of the (English-authored) source
-# index.html. Only 'ja' actually rewrites anything; 'en' is left as-is.
+# Per-language head overrides for the English source index.html.
 _INDEX_LOCALIZED = {
     'ja': {
         '<html lang="en">': '<html lang="ja">',
@@ -3607,13 +3460,10 @@ _INDEX_LOCALIZED = {
 }
 
 def _render_index(lang='en', public_dir=None, dev=False):
-    """Read index.html, stamp app.js's mtime onto the css/js URLs as a cache-busting
-    query param, and (for non-English variants) rewrite the head's title/meta/
-    canonical/og/twitter tags and initial-language flag via _INDEX_LOCALIZED.
-    Cached per-(public_dir, lang) and only re-rendered when either source
-    file's mtime changes, so the common case is two cheap stat() calls
-    instead of two full file reads. The mtime doubles as the version, so a
-    file edit always gets a fresh URL with no manual version bump needed."""
+    """Render localised index.html with mtime-based CSS/JS cache busting.
+
+    Cache by (public_dir, lang) until a source file changes.
+    """
     public_dir = public_dir or _public
     idx_path = os.path.join(public_dir, 'index.html')
     js_path = os.path.join(public_dir, 'app.js')
@@ -3652,13 +3502,8 @@ def index_zh():
     response.headers['Cache-Control'] = 'no-cache, max-age=0'
     return response
 
-# send_from_directory responses are streamed, and flask-compress compresses
-# streamed responses chunk-by-chunk on EVERY request with no caching — so each
-# visitor cost a fresh brotli pass over the ~1.4MB + ~0.8MB region geojsons.
-# For large, rarely-changing text assets we instead compress once per file
-# version (keyed on mtime/size) and serve the cached bytes with Content-Encoding
-# set, which makes flask-compress skip the response entirely. Since it's a
-# one-time cost, we also compress harder than its per-request defaults.
+# Cache compressed assets by file version to avoid per-request compression.
+# Content-Encoding makes flask-compress skip these precompressed responses.
 _PRECOMPRESS_EXTS = ('.geojson', '.js', '.css', '.json', '.webmanifest', '.svg')
 _PRECOMPRESS_MIN_SIZE = 8192
 _precompressed: dict = {}  # (path, mtime, size, algo) -> compressed bytes
@@ -3720,27 +3565,27 @@ def static_files(filename):
 
 @sock.route('/ws')
 def websocket_recv_open(ws: WebsocketBase):
-    open_sockets.add(ws) # Add the socket to the set of open sockets
-    send_recent_data(ws) # Send the recent data to the new socket
+    open_sockets.add(ws)
+    send_recent_data(ws)
 
     while True:
-        message = ws.receive(timeout=12) # If ping not recieved every 12 seconds, close the connection
+        message = ws.receive(timeout=12)  # Close after 12s without a client ping.
         if message is None:
             break
 
-        if message == '!ping': # Respond to a ping
+        if message == '!ping':
             ws.send('!pong')
         
         if ws not in open_sockets:
             break
 
     try:
-        ws.send('!timeout') # Send a timeout message before closing the connection
+        ws.send('!timeout')
     except Exception:
         pass
 
     try:
-        open_sockets.remove(ws) # Remove the socket from the set of open sockets
+        open_sockets.remove(ws)
     except Exception:
         pass
 
@@ -3785,7 +3630,7 @@ def send_notification(title_en, title_ja, message_en, message_ja, tag="alerts"):
 
 
 def send_ntfy_notification(title, message, topic, click=NTFY_CLICK_URL):
-    # An empty topic would post to the bare server URL, so it is a guard, not a nicety.
+    # Reject an empty topic to avoid posting to the bare server URL.
     if not NTFY_URL or not NTFY_TOKEN or not topic:
         dmdws.logger.warning("ntfy notification skipped: ntfy is not configured")
         return {'ok': False, 'error': 'not configured'}
@@ -3816,7 +3661,8 @@ def send_ntfy_notification(title, message, topic, click=NTFY_CLICK_URL):
 
 
 def _crosspost_discord_message(channel_id, message_id):
-    """Publish a message so servers following the (announcement-type) channel get a copy."""
+    """Publish a message so servers following the (announcement-type) channel get a
+    copy."""
     if not DISCORD_BOT_TOKEN or not channel_id or not message_id:
         return
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}/crosspost"
@@ -3843,7 +3689,7 @@ def send_discord_notification(title, message, webhook_url, link, image_bytes=Non
         embed["image"] = {"url": "attachment://quake.png"}
     payload = {"embeds": [embed]}
 
-    # ?wait=true makes Discord return the created message (id/channel_id) so it can be crossposted.
+    # Request the created message ID/channel ID for crossposting.
     sep = '&' if '?' in webhook_url else '?'
     post_url = f"{webhook_url}{sep}wait=true"
 
@@ -3868,16 +3714,11 @@ def send_discord_notification(title, message, webhook_url, link, image_bytes=Non
     except requests.RequestException as e:
         dmdws.logger.error(f"Discord notification request failed: {e}")
         return {'ok': False, 'error': str(e)}
-# Setting the message listener (tells dmdws what function to call when a message is received) 
 conn.set_message_listener(on_message, threading=False)
 
-# Starting the connection, "run" will block the program indefinitely.
 conn.start()
 
-# Backfill keyframes for already-recorded history so deep timeline jumps are fast
-# immediately after a restart (not just for data recorded after restart). Runs in
-# the background so it doesn't delay the server coming up.
+# Backfill replay keyframes in the background without delaying startup.
 threading.Thread(target=_backfill_all_station_keyframes, daemon=True).start()
 
-app.run('0.0.0.0', 8000) # Start the Flask app on port 8000
-#on_message(conn._attempt_decode(json.load(open('9.json' , 'r', encoding='utf-8'))))
+app.run('0.0.0.0', 8000)

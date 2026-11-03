@@ -22,9 +22,7 @@ from typing import Optional, NoReturn, Callable, Any
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# DM-DSS OAuth application credentials, read from the environment with no
-# fallback. An unset variable stays empty rather than becoming a placeholder
-# that DMDATA would reject with a confusing 401; main.py reports it at startup.
+# main.py validates these credentials at startup; no fallback is provided.
 client_id = os.environ.get("WEBQUAKE_DMDATA_CLIENT_ID", "").strip()
 client_secret = os.environ.get("WEBQUAKE_DMDATA_CLIENT_SECRET", "").strip()
 
@@ -107,7 +105,8 @@ class Connection():
                 else:
                     data = res.json()
                     
-                    self._access_token_expire = int(time.time()) + int(data['expires_in']) - 60 # 60 seconds buffer, just in case
+                    # Refresh one minute before expiry.
+                    self._access_token_expire = int(time.time()) + int(data['expires_in']) - 60
                     self._access_token = data['access_token']
                     
                     logger.debug("Access token refreshed.")
@@ -227,7 +226,7 @@ class Connection():
             if json_data.get("type") == "ping":
                 ping_count += 1
                 now = time.time()
-                # Log the first few pings so startup is visible, then only once an hour to keep the console tidy.
+                # Log startup pings, then only once per hour.
                 if ping_count <= 3 or now - last_ping_log >= 3600:
                     logger.debug("Received ping, sending pong... (pingId: %s)", json_data["pingId"])
                     last_ping_log = now
@@ -252,21 +251,10 @@ class Connection():
 
 
     def set_message_listener(self, listener_func: Callable[[dict], Any], threading: bool) -> None:
-        """Sets the function to be called when a message is received (excluding pings). You can only have one message listener.
-        
-        `listener_func` should be a function that takes a single argument, the message, given as a `dict`.
+        """Register the single message listener; pings are excluded.
 
-        `threading` should be a boolean. If `True` the listener will be called in a separate thread (allowing you to process multiple messages at the same time),
-        if `False`, you will receieve messages one by one, and only receive the next one after the listener function has returned.
-
-        Example:
-        ```python
-        def listener(msg: dict):
-            print(msg)
-        conn = Connection(...)
-        conn.set_message_listener(listener, threading=True)
-        conn.run()
-        ```
+        The listener receives a message dict. With threading=True, messages
+        run in separate threads; otherwise each call finishes before the next.
         """
         if self._listener:
             raise Exception("A message listener is already set.")
@@ -309,14 +297,9 @@ class Connection():
 
     @staticmethod
     def get_refresh_token() -> str:
-        """Opens a browser to authenticate with DMDATA and returns a refresh token.
+        """Open browser authentication and return a DMDATA refresh token.
 
-        Uses OAuth2 authorization code flow with PKCE. Example:
-        ```python
-        refresh_token = Connection.get_refresh_token()
-        conn = Connection(refresh_token, types=[...])
-        ```
-        """
+        Uses the OAuth2 authorization code flow with PKCE."""
         code_verifier = secrets.token_urlsafe(64)
         code_challenge = base64.urlsafe_b64encode(
             hashlib.sha256(code_verifier.encode()).digest()

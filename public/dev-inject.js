@@ -1,7 +1,7 @@
-// WebQuake dev injector — load via browser console:
+// Run in the browser console:
 //   fetch('/dev-inject.js').then(r=>r.text()).then(eval)
 // Or temporarily add <script src="dev-inject.js"></script> to index.html.
-// displayData() is already a global so no backend needed.
+// Call the page's displayData() directly without waiting for upstream events.
 
 const _STATIONS = [
     // Hokkaido
@@ -62,7 +62,7 @@ const _TSUNAMI_KIND_CODES        = ['53',     '52',     '51',        '51',      
 const _TSUNAMI_HEIGHT_OVER       = [false,    false,    false,       false,      false,                  false,       true,           false,    false];
 const _TSUNAMI_CONDITIONS        = ['津波到達中と推測', '第１波到達を確認', '', '', '', '', '', '', ''];
 
-// Non-numeric height scenario (巨大/高い) — like the 2016 Kumamoto scenario
+// Non-numeric height scenario: 巨大 (huge) / 高い (high).
 const _TSUNAMI_HUGE_CODES      = ['210',  '220',  '250',       '380',       '400',          '610',    '760',    '530',    '580'];
 const _TSUNAMI_HUGE_EN         = ['Iwate','Miyagi','Fukushima', 'Shizuoka',  'Southern Mie', 'Kochi',  'Miyazaki','Wakayama','Tokushima'];
 const _TSUNAMI_HUGE_JP         = ['岩手県','宮城県','福島県',    '静岡県',    '三重県南部',   '高知県', '宮崎県',  '和歌山県','徳島県'];
@@ -95,7 +95,7 @@ function _eewBase(extra) {
     }, extra);
 }
 
-// ── Public test functions ─────────────────────────────────────────────
+// Public test functions
 
 window.testNied = function() {
     displayData({type:'nied_stations', stations:_STATIONS});
@@ -240,10 +240,8 @@ window.testTwStations = function() {
     console.log('[test] Taiwan/ExpTech stations injected');
 };
 
-// CWA-style post-event report — mirrors the shape poll_cwa_reports() will
-// eventually broadcast (earthquake_no, lat/lon, depth, magnitude, location,
-// per-station stations[]). Station coords are spread across a few counties
-// so computeTwRegionIntensitiesFromStations has something to bucket.
+// CWA post-event report with stations spread across counties to test
+// point-in-polygon region grouping.
 window.testTwQuake = function() {
     displayData({
         type: 'tw_earthquake',
@@ -272,10 +270,7 @@ window.testTwQuakeClear = function() {
     console.log('[test] Taiwan quake cleared');
 };
 
-// Earthquake History sidebar — Taiwan entries. Mirrors what poll_cwa_reports()
-// broadcasts (earthquake_no/lat/lon/depth/magnitude/location/ts/max_int/web),
-// spread across a few timestamps so they interleave with live JMA history
-// entries when testing the Both/JP/TW sidebar filter buttons.
+// Taiwan history entries interleave with JMA timestamps to test country filters.
 window.testTwHistory = function() {
     const now = Math.floor(Date.now() / 1000);
     displayData({
@@ -295,9 +290,7 @@ window.testTwHistory = function() {
     console.log('[test] Taiwan quake history injected');
 };
 
-// Live Taiwan EEW — field shape (author/serial/eq.{time,loc,lat,lon,mag,depth,max})
-// confirmed from ExpTech's own live production trem.js, not guessed. eq.time is
-// epoch milliseconds (unlike JMA's unix-seconds convention).
+// ExpTech EEW payload; eq.time is epoch milliseconds, unlike JMA seconds.
 window.testTwEew = function(cwa = true) {
     displayData({
         type: 'tw_eew',
@@ -485,11 +478,8 @@ window.testPastQuake = function() {
     console.log('[test] Past quake injected');
 };
 
-// JMA report matched to a CWA report server-side (hypocenter code 900/901 +
-// haversine/time match against recent_tw_history, see _find_matching_tw_report
-// in main.py). Frontend should: suppress the '__past__' epicenter marker
-// entirely, and show a small "CWA ↗" note in this quake's sidebar entry
-// instead of a JMA map pin/flyTo.
+// Backend-matched JMA/CWA event: hide the JMA marker and show a CWA link
+// in the JMA sidebar entry instead.
 window.testTwMatch = function() {
     const quakeTime = _nowJst() - 90;
     displayData({
@@ -592,7 +582,8 @@ window.testTsunamiObs = function() {
         obs_codes:            ['38090',                   '40090',           '53090',                    '61050',              '61090',                       '76090'],
         obs_heights:          [1.8,                        2.0,               1.2,                        0.8,                  1.7,                           0.5],
         obs_conditions:       ['第１波到達を確認', '第１波到達を確認', '第１波到達を確認', '第１波到達を確認', '第１波到達を確認', '第１波到達を確認'],
-        // lat/lon/radius come from eng_codes.offshore_station_coords (surveyed buoy positions, except 76090 which is a geocoded estimate)
+        // Coordinates come from eng_codes.offshore_station_coords;
+        // 76090 is estimated, and the other buoys are surveyed.
         obs_lats:           [34.4033, 33.9022, 33.6422, 33.0792, 32.6311, 31.55],
         obs_lons:           [138.2750, 136.2594, 135.1567, 134.1864, 133.1558, 131.85],
         obs_radii_km:       [5, 5, 5, 8, 5, 25],

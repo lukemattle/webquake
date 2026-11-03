@@ -1,4 +1,4 @@
-# prefecture list 23 (long codes are 22)
+# JMA prefecture codes (table 23; long codes use table 22).
 prefecture = {
     '01': 'Hokkaido',
     '09011': 'Central Hokkaido',
@@ -103,20 +103,20 @@ prefecture = {
     '09473': 'Miyakojima',
     '09474': 'Yaeyama'
 }
-# EEW/Forecast 11 & 12
-WARN_EEW = ('00031','00010','00011','19') # 19=PLUM
-FORECAST_EEW = ('01','09') # 09=PLUM
-# Tsunami 14
-CANCEL_TSUNAMI = ('00050') # both major and normal
+# EEW warning/forecast codes (tables 11 and 12).
+WARN_EEW = ('00031','00010','00011','19')  # 19 = PLUM.
+FORECAST_EEW = ('01','09')  # 09 = PLUM.
+# Tsunami codes (table 14).
+CANCEL_TSUNAMI = ('00050')  # Major and standard warnings.
 CANCEL_TSUNAMI_ADVISORY = ('00060')
 WARN_TSUNAMI = ('00051')
 WARN_MAJOR_TSUNAMI = ('00052','00053')
 WARN_TSUNAMI_ADVISORY = ('00062')
 WARN_TSUNAMI_FORECAST = ('00071')
 SWITCH_TSUNAMI_ADVISORY_FORECAST = ('00072')
-SWITCH_TSUNAMI_WARNING_FORECAST = ('00073') # both major and normal
+SWITCH_TSUNAMI_WARNING_FORECAST = ('00073')  # Major and standard warnings.
 NO_TSUNAMI = ('0215')
-# Districts 21
+# District codes (table 21).
 DS_HOKKAIDO = ('09910')
 DS_TOHOKU = ('09920')
 DS_KANTO = ('09931')
@@ -132,7 +132,8 @@ DS_KYUSHU = ('09951')
 DS_AMAMI = ('09952')
 DS_OKINAWA = ('09960')
 
-regions = { # 41
+# JMA region codes (table 41).
+regions = {
     "011": "Hokkaido area",
     "012": "Tohoku Region",
     "013": "Hokuriku District",
@@ -478,7 +479,8 @@ regions = { # 41
     "999": "Distant regions"
 }
 
-coastal_regions = { # 34
+# JMA coastal region codes (table 34).
+coastal_regions = {
     '100': 'Eastern Pacific Coast of Hokkaido',
     '101': 'Hokkaido Pacific Coast Central',
     '102': 'Western Pacific Coast of Hokkaido',
@@ -599,44 +601,32 @@ offshore_stations = {
     '80090': 'Off Tanegashima, Kagoshima',
 }
 
-# Locations of JMA offshore tsunami observation stations, as
-# (lat, lon, radius_km, is_estimated).
-#
-# Most of these are MLIT/NOWPHAS GPS wave-gauge buoys. JMA publishes them under
-# different names than NOWPHAS does internally — a 2014 MLIT press release
-# (https://www.mlit.go.jp/common/000143878.pdf, "GPS波浪計観測地点一覧") gives the
-# mapping, e.g. NOWPHAS's "高知西部沖" is announced by JMA as "<高知足摺岬沖>".
-# Using that mapping, exact surveyed coordinates for each buoy were pulled from
-# NOWPHAS's live station list (https://nowphas.mlit.go.jp/PROG/xml/POINT_SETUP.xml):
-#   804 岩手中部沖 <岩手宮古沖>      -> 30090 Off Miyako
-#   802 岩手南部沖 <岩手釜石沖>      -> 32090 Off Kamaishi
-#   812 静岡御前崎沖                  -> 38090 Off Omaezaki
-#   811 三重尾鷲沖                    -> 40090 Off Owase
-#   813 和歌山南西沖 <和歌山白浜沖>   -> 53090 Off Shirahama
-#   815 徳島海陽沖                    -> 58090 Off Kaiyo
-#   814 高知西部沖 <高知足摺岬沖>     -> 61090 Off Ashizurimisaki
-#   817 高知室戸岬沖 (installed 2014) -> 61050 "100km off Kochi A" (the other Kochi
-#       buoy alongside Ashizurimisaki — Murotomisaki is ~100km up the coast from it)
-#
-# The rest have no NOWPHAS match (likely newer JMA-only seafloor sensors, e.g. the
-# S-net/N-net cable networks off Hokkaido/Tohoku/Kyushu) and are estimated by
-# geocoding the named cape/town and offsetting offshore by the distance implied
-# by the station name. radius_km reflects confidence — small for surveyed buoys
-# and named-cape estimates, large for the vague "Xkm off <pref>" ones.
+# Offshore locations: (lat, lon, radius_km, is_estimated).
+# Surveyed buoy coordinates come from NOWPHAS:
+# https://nowphas.mlit.go.jp/PROG/xml/POINT_SETUP.xml
+# JMA/NOWPHAS name mapping: https://www.mlit.go.jp/common/000143878.pdf
+# Unmatched stations use offshore estimates from their names; radius_km
+# records location uncertainty. Inline buoy IDs identify surveyed sources.
 offshore_station_coords = {
-    '20010': (42.83, 144.45, 25, True),       # Off Kushiro, Hokkaido (estimated)
-    '20090': (41.75, 143.20, 25, True),       # Off Erimo, Hokkaido (estimated)
-    '30090': (39.6272, 142.1867, 5, False),   # Off Miyako, Iwate (surveyed, NOWPHAS 804)
-    '32090': (39.2586, 142.0969, 5, False),   # Off Kamaishi, Iwate (surveyed, NOWPHAS 802)
-    '35090': (39.05, 141.95, 25, True),       # Off Ofunato, Iwate (estimated)
-    '38090': (34.4033, 138.2750, 5, False),   # Off Omaezaki, Shizuoka (surveyed, NOWPHAS 812)
-    '40060': (33.4, 137.0, 45, True),         # 80km SE off Mie (estimated)
-    '40090': (33.9022, 136.2594, 5, False),   # Off Owase, Mie (surveyed, NOWPHAS 811)
-    '53063': (32.9, 136.0, 45, True),         # 70km off Wakayama B (estimated)
-    '53090': (33.6422, 135.1567, 5, False),   # Off Shirahama, Wakayama (surveyed, NOWPHAS 813)
-    '58090': (33.4697, 134.4797, 5, False),   # Off Kaiyo, Tokushima (surveyed, NOWPHAS 815)
-    '61050': (33.0792, 134.1864, 8, False),   # 100km off Kochi A == Off Murotomisaki (surveyed, NOWPHAS 817)
-    '61090': (32.6311, 133.1558, 5, False),   # Off Ashizurimisaki, Kochi (surveyed, NOWPHAS 814)
-    '76090': (31.55, 131.85, 25, True),       # Off Nichinan, Miyazaki (estimated)
-    '80090': (30.6, 131.20, 25, True),        # Off Tanegashima, Kagoshima (estimated)
+    '20010': (42.83, 144.45, 25, True),  # Off Kushiro, Hokkaido (estimated)
+    '20090': (41.75, 143.20, 25, True),  # Off Erimo, Hokkaido (estimated)
+    '30090': (39.6272, 142.1867, 5, False),  # Off Miyako, Iwate (surveyed, NOWPHAS 804)
+    # Off Kamaishi, Iwate (NOWPHAS 802)
+    '32090': (39.2586, 142.0969, 5, False),
+    '35090': (39.05, 141.95, 25, True),  # Off Ofunato, Iwate (estimated)
+    # Off Omaezaki, Shizuoka (NOWPHAS 812)
+    '38090': (34.4033, 138.2750, 5, False),
+    '40060': (33.4, 137.0, 45, True),  # 80km SE off Mie (estimated)
+    '40090': (33.9022, 136.2594, 5, False),  # Off Owase, Mie (surveyed, NOWPHAS 811)
+    '53063': (32.9, 136.0, 45, True),  # 70km off Wakayama B (estimated)
+    # Off Shirahama, Wakayama (NOWPHAS 813)
+    '53090': (33.6422, 135.1567, 5, False),
+    # Off Kaiyo, Tokushima (NOWPHAS 815)
+    '58090': (33.4697, 134.4797, 5, False),
+    # 100km off Kochi A == Off Murotomisaki (NOWPHAS 817)
+    '61050': (33.0792, 134.1864, 8, False),
+    # Off Ashizurimisaki, Kochi (NOWPHAS 814)
+    '61090': (32.6311, 133.1558, 5, False),
+    '76090': (31.55, 131.85, 25, True),  # Off Nichinan, Miyazaki (estimated)
+    '80090': (30.6, 131.20, 25, True),  # Off Tanegashima, Kagoshima (estimated)
 }
