@@ -193,7 +193,9 @@ class HubTests(HubFixture):
             self.hub.send(ws, 'blocked')
         for ws in blocked:
             self.assertTrue(ws.entered.wait(1))
-        with patch.object(self.hub._work, 'maxsize', 1):
+        original_maxsize = self.hub._work.maxsize
+        self.hub._work.maxsize = 1
+        try:
             waiting, rejected = self.admitted(), self.admitted()
             self.hub.activate(waiting)
             self.hub.send(waiting, 'queued')
@@ -201,6 +203,8 @@ class HubTests(HubFixture):
             self.hub.send(rejected, 'queue-full')
             self.assertTrue(self.hub.contains(waiting))
             self.assertFalse(self.hub.contains(rejected))
+        finally:
+            self.hub._work.maxsize = original_maxsize
         for ws in blocked:
             self.hub.disconnect(ws)
         self.wait_for_sends()

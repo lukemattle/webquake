@@ -1,5 +1,11 @@
+from gevent import monkey
+monkey.patch_all()  # Patch I/O before importing the app or starting its pollers.
+
+import gevent
+import signal
+
 import env_loader  # noqa: F401 - loads .env into os.environ before config is read
-import dmdws, time, os, json, db, threading, requests, io, colorsys, glob, secrets, mimetypes, re, itertools, gzip, math
+import dmdws, time, os, sys, json, db, threading, requests, io, colorsys, glob, secrets, mimetypes, re, itertools, gzip, math
 import numpy as np
 import brotli
 import history_cache
@@ -11,6 +17,8 @@ from datetime import datetime, timezone, timedelta
 from enums import eng_codes
 from flask import Flask, send_from_directory, request, session, redirect, jsonify, abort
 from flask_sock import Sock
+from gevent.pool import Pool
+from gevent.pywsgi import WSGIServer
 from flask_compress import Compress
 from simple_websocket.ws import Base as WebsocketBase
 from PIL import Image, ImageDraw, ImageFont
@@ -20,6 +28,11 @@ mimetypes.add_type('application/geo+json', '.geojson')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 JST = timezone(timedelta(hours=9))
 TAIPEI = timezone(timedelta(hours=8))
+_SHINDO_ORDER = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7']
+_SHINDO_RANK = {v: i for i, v in enumerate(_SHINDO_ORDER)}
+
+# Start collectors only after definitions are complete and port 8000 is bound.
+_background_tasks = []
 _station_lookup_path = os.path.join(BASE_DIR, 'jma-stations.json')
 with open(_station_lookup_path, encoding='utf-8') as _f:
     _station_lookup = {s['code']: s for s in json.load(_f)}
@@ -1310,7 +1323,7 @@ def _backfill_stations():
                 cursor.execute('INSERT OR REPLACE INTO backfill_meta (key, value) VALUES (?, ?)',
                                (mark_key, newest))
 
-threading.Thread(target=_backfill_stations, daemon=True).start()
+_background_tasks.append(_backfill_stations)
 
 def store_data(output_data, data):
     table_name = f"{data['head']['type'].upper()}"
@@ -1557,7 +1570,7 @@ def send_jst_time():
         send_data_to_all_sockets({'jst_time': jst_time})
         time.sleep(1)
 
-threading.Thread(target=send_jst_time, daemon=True).start()
+_background_tasks.append(send_jst_time)
 
 # --- 48h history log: heartbeat (for gap detection) + pruning ---
 def _history_heartbeat_loop():
@@ -1616,9 +1629,9 @@ def _load_history_cache():
         _history_cache.load_error = str(e)
         dmdws.logger.warning('History replay cache: migration FAILED after %.3fs, falling back to SQLite for replay reads: %s', _history_cache.load_seconds, e)
 
-threading.Thread(target=_load_history_cache, daemon=True).start()
-threading.Thread(target=_history_heartbeat_loop, daemon=True).start()
-threading.Thread(target=_history_prune_loop, daemon=True).start()
+_background_tasks.append(_load_history_cache)
+_background_tasks.append(_history_heartbeat_loop)
+_background_tasks.append(_history_prune_loop)
 
 # --- NIED kmoni polling ---
 KMONI_REALTIME = "http://www.kmoni.bosai.go.jp/data/map_img/RealTimeImg/jma_s/{date}/{ts}.jma_s.gif"
@@ -1827,8 +1840,8 @@ def poll_nied_pga():
         _nied_decode_and_send(img, img_pga, img_borehole)
         last_pga_ts = ts
 
-threading.Thread(target=poll_nied_jma, daemon=True).start()
-threading.Thread(target=poll_nied_pga, daemon=True).start()
+_background_tasks.append(poll_nied_jma)
+_background_tasks.append(poll_nied_pga)
 
 # --- S-net (MSIL smoni) polling ---
 SNET_TIMES_URL = "https://www.msil.go.jp/data/tiles/smoni/targetTimes.json"
@@ -1906,7 +1919,7 @@ def poll_snet():
             print(f'[SNET] poll failed: {e}')
         time.sleep(10)
 
-threading.Thread(target=poll_snet, daemon=True).start()
+_background_tasks.append(poll_snet)
 
 # --- Taiwan: ExpTech TREM-Net live stations + live EEW, CWA earthquake reports ---
 # ExpTech provides community TREM-Net stations and EEW via load-balanced hosts.
@@ -1992,7 +2005,7 @@ def poll_exptech_rts():
             print(f'[ExpTech] rts poll failed: {e}')
         time.sleep(1)
 
-threading.Thread(target=poll_exptech_rts, daemon=True).start()
+_background_tasks.append(poll_exptech_rts)
 
 # Track Taiwan EEW separately: its nested ExpTech payload differs from JMA.
 recent_tw_eew_data: dict = {}  # {id: payload}
@@ -2048,7 +2061,7 @@ def poll_exptech_eew():
             print(f'[ExpTech] eew poll failed: {e}')
         time.sleep(1)
 
-threading.Thread(target=poll_exptech_eew, daemon=True).start()
+_background_tasks.append(poll_exptech_eew)
 
 # Official CWA reports: E-A0015-001 (有感地震報告).
 # OriginTime is ISO 8601 with an explicit offset. Intensity strings use N級
@@ -2144,9 +2157,7 @@ recent_tw_history: list = []
 _TW_HISTORY_CAP = 40
 
 def _load_tw_history():
-    """Seed Taiwan sidebar history from SQLite before the next CWA poll.
-
-    _SHINDO_RANK is resolved when the polling thread calls this after startup."""
+    """Seed Taiwan sidebar history from SQLite before the next CWA poll."""
     global recent_tw_history
     try:
         with db.Database() as cursor:
@@ -2263,7 +2274,7 @@ def poll_cwa_reports():
             print(f'[CWA] poll failed: {e}')
         time.sleep(20)
 
-threading.Thread(target=poll_cwa_reports, daemon=True).start()
+_background_tasks.append(poll_cwa_reports)
 
 # {key: output_data} — key is str(origin_time or quake_time)
 recent_earthquake_data = {}
@@ -2475,8 +2486,6 @@ def _compute_quake_points_index():
         events.append({'ts': ts, 'lat': lat, 'lon': lon, 'st': bool(has_st)})
     return events
 
-_SHINDO_ORDER = ['0', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7']
-_SHINDO_RANK = {v: i for i, v in enumerate(_SHINDO_ORDER)}
 
 def _max_station_intensity(event_id):
     """Fall back to the highest per-station intensity we recorded for this event
@@ -2550,7 +2559,7 @@ def poll_jma_quake_history():
             dmdws.logger.info(f'[JMA] quake history fetch failed: {e}')
         time.sleep(30)
 
-threading.Thread(target=poll_jma_quake_history, daemon=True).start()
+_background_tasks.append(poll_jma_quake_history)
 
 def send_recent_data(ws: WebsocketBase):
     if _last_nied_full:
@@ -2859,7 +2868,13 @@ def _keyframes_for_gap(msg_type, diff_type, base_ts, end_ts):
         return []
     last_kf_ts = base_ts
     out = []
-    for i, (ts, payload) in enumerate(_history_cache.range(diff_type, base_ts, end_ts, from_exclusive=True)):
+    last_yield = time.monotonic()
+    for ts, payload in _history_cache.range(diff_type, base_ts, end_ts, from_exclusive=True):
+        # JSON reconstruction is CPU work: give the server and signal handlers
+        # a turn frequently, even when a run of stored payloads is malformed.
+        if time.monotonic() - last_yield >= 0.01:
+            time.sleep(0.001)
+            last_yield = time.monotonic()
         try:
             diff = json.loads(payload)
         except Exception:
@@ -2871,8 +2886,6 @@ def _keyframes_for_gap(msg_type, diff_type, base_ts, end_ts):
         if ts - last_kf_ts >= HISTORY_STATION_KEYFRAME_SECONDS:
             out.append((ts, json.dumps({'type': msg_type, 'stations': list(stations.values())}, separators=(',', ':'))))
             last_kf_ts = ts
-        if i % 4000 == 3999:
-            time.sleep(0)  # yield the GIL so live polling/WS threads aren't starved
     return out
 
 def _backfill_station_keyframes(msg_type, diff_type):
@@ -2913,6 +2926,12 @@ def _backfill_station_keyframes(msg_type, diff_type):
 def _backfill_all_station_keyframes():
     if not HISTORY_CACHE_ENABLED:
         return
+    # The cache now warms after the listener starts; wait rather than skipping
+    # backfill if it has not finished. On load failure replay uses SQLite.
+    while not _history_cache.ready:
+        if _history_cache.load_error is not None:
+            return
+        time.sleep(0.1)
     started = time.time()
     try:
         n_nied = _backfill_station_keyframes('nied_stations', 'nied_stations_diff')
@@ -3718,9 +3737,38 @@ def send_discord_notification(title, message, webhook_url, link, image_bytes=Non
         return {'ok': False, 'error': str(e)}
 conn.set_message_listener(on_message, threading=False)
 
-conn.start()
-
 # Backfill replay keyframes in the background without delaying startup.
-threading.Thread(target=_backfill_all_station_keyframes, daemon=True).start()
+_background_tasks.append(_backfill_all_station_keyframes)
 
-app.run('0.0.0.0', 8000)
+def _run_server():
+    if sys.platform.startswith('linux'):
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = 65_536 if hard == resource.RLIM_INFINITY else min(65_536, hard)
+        if soft < target:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    # Route Ctrl+C to the main lifecycle, rather than whichever background
+    # greenlet happens to be running when the signal arrives.
+    stopped = gevent.event.Event()
+    handlers = [gevent.signal_handler(sig, stopped.set)
+                for sig in (signal.SIGINT, signal.SIGTERM)]
+    server = WSGIServer(('127.0.0.1', 8000), app, spawn=Pool(12_000), log=None)
+    tasks = []
+    try:
+        server.start()
+        print('WebQuake listening on http://127.0.0.1:8000', flush=True)
+        tasks = [gevent.spawn(target) for target in _background_tasks]
+        conn.start()
+        stopped.wait()
+    finally:
+        gevent.killall(tasks)
+        server.stop(timeout=1)
+        open_sockets.shutdown()
+        _bg_executor.shutdown(wait=False, cancel_futures=True)
+        _nied_fetch_executor.shutdown(wait=False, cancel_futures=True)
+        for handler in handlers:
+            handler.cancel()
+
+
+if __name__ == '__main__':
+    _run_server()

@@ -8,3 +8,4 @@ Pillow==12.2.0
 numpy==2.4.6
 websocket-client==1.9.0
 brotli==1.2.0
+gevent==26.9.0
