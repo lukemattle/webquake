@@ -20,9 +20,9 @@ How to run:
     export WEBQUAKE_DMDATA_CLIENT_SECRET=your-client-secret
     python get_refresh.py
 ```
-5. Set the environment by copying .env.example and filling it in. Only 4 variables are required for WebQuake to start, but filling in the optional ones is highly recommended.
-6. Run `main.py`. On first start, it'll create everything it needs to run (DB and folders). It binds to port 8000, so open it with http://localhost:8000
-7. Replace remaining upstream values, in `index.html` replace `OS_APP_ID` with your OneSignal app ID, and in `app.js` the NTFY variables must match the backend variables in your environment. This does not require a restart.
+5. Set the environment by copying .env.example to .env and filling it in. Only 4 variables are required for WebQuake to start, but filling in the optional ones is highly recommended.<br>The default WebSocket limits should only be changed if needed.
+6. Run `python private/main.py`. On first start, it'll create everything it needs to run (DB and folders). It binds to port 8000, so open it with http://localhost:8000 <br>By default, localhost binding will prevent direct access via other machines.
+7. Replace remaining upstream values, in `index.html` replace `OS_APP_ID` with your OneSignal app ID, and in `app.js` the NTFY variables must match the backend variables in your environment. Also fill in your CARTO API key in `app.js` and `https://URL/` in `index.html`. This does not require a restart.
 8. Wire up notifications through OneSignal, ntfy and Discord:
 OneSignal:
 Create an app, then set the app ID in both the environment and index.html, and the REST API key in the environment only. The bundled service worker files are OneSignal's own one-line boilerplate and need no changes.
