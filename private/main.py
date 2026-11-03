@@ -3,6 +3,7 @@ import dmdws, time, os, json, db, threading, requests, io, colorsys, glob, secre
 import numpy as np
 import brotli
 import history_cache
+import websocket_hub
 from concurrent.futures import ThreadPoolExecutor
 from werkzeug.security import safe_join
 from functools import wraps, lru_cache
@@ -1465,10 +1466,15 @@ app.config['COMPRESS_MIMETYPES'] = [
 # Include gzip alongside br/zstd for older clients receiving streamed files.
 app.config['COMPRESS_ALGORITHM_STREAMING'] = ['zstd', 'br', 'gzip', 'deflate']
 Compress(app)
+app.config['SOCK_SERVER_OPTIONS'] = {'max_message_size': websocket_hub.MAX_MESSAGE_SIZE}
 sock = Sock(app)
 
-open_sockets: set[WebsocketBase] = set()
-_socket_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix='ws-send')
+open_sockets = websocket_hub.WebSocketHub()
+# cloudflared connects locally and sets CF-Connecting-IP. Other immediate proxies
+# must be explicitly configured; never trust visitor-supplied forwarding headers.
+_ws_trusted_proxies = websocket_hub.proxy_networks(os.environ.get(
+    'WEBQUAKE_WS_TRUSTED_PROXY_CIDRS', '127.0.0.1/32,::1/128'
+))
 _bg_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='bg-task')
 
 # Reuse HTTP connections per thread without sharing mutable Session state.
@@ -1532,8 +1538,7 @@ def _record_history(data: dict, json_data: str):
 def send_data_to_all_sockets(data: dict):
     json_data = json.dumps(data, separators=(',', ':'))
     _bg_executor.submit(_record_history, data, json_data)
-    for ws in open_sockets.copy():
-        _socket_executor.submit(send_data, ws, json_data)
+    open_sockets.broadcast(json_data)
 
 def _maybe_record_station_keyframe(msg_type: str, stations: list):
     """Periodically record a full station snapshot to the replay history without
@@ -2554,9 +2559,9 @@ def send_recent_data(ws: WebsocketBase):
         send_data(ws, json.dumps({'type': 'snet_stations', 'stations': _last_snet_full}, separators=(',', ':')))
     if _last_exptech_full:
         send_data(ws, json.dumps({'type': 'exptech_stations', 'stations': _last_exptech_full}, separators=(',', ':')))
-    for eew_data in recent_earthquake_data.values():
+    for eew_data in list(recent_earthquake_data.values()):
         send_data(ws, json.dumps(eew_data, separators=(',', ':')))
-    for tw_eew_data in recent_tw_eew_data.values():
+    for tw_eew_data in list(recent_tw_eew_data.values()):
         send_data(ws, json.dumps(tw_eew_data, separators=(',', ':')))
     if recent_tsunami_data:
         send_data(ws, json.dumps(recent_tsunami_data, separators=(',', ':')))
@@ -2725,14 +2730,8 @@ def send_alert(output_data):
         dmdws.logger.info('No notification sent as data type does not call for it')
 
 def send_data(ws: WebsocketBase, data: str):
-    if ws.connected:
-        try:
-            ws.send(data)
-            return
-        except Exception:
-            pass  # If the send fails, the socket is likely closed
-
-    open_sockets.discard(ws)
+    # This helper is only used to build a new connection's initial snapshot.
+    open_sockets.send(ws, data, initial=True)
     
 
 _public = os.path.join(BASE_DIR, '..', 'public')
@@ -3463,7 +3462,7 @@ def _render_index(lang='en', public_dir=None, dev=False):
     """Render localised index.html with mtime-based CSS/JS cache busting.
 
     Cache by (public_dir, lang) until a source file changes.
-    """
+"""
     public_dir = public_dir or _public
     idx_path = os.path.join(public_dir, 'index.html')
     js_path = os.path.join(public_dir, 'app.js')
@@ -3565,29 +3564,32 @@ def static_files(filename):
 
 @sock.route('/ws')
 def websocket_recv_open(ws: WebsocketBase):
-    open_sockets.add(ws)
-    send_recent_data(ws)
-
-    while True:
-        message = ws.receive(timeout=12)  # Close after 12s without a client ping.
-        if message is None:
-            break
-
-        if message == '!ping':
-            ws.send('!pong')
-        
-        if ws not in open_sockets:
-            break
-
     try:
-        ws.send('!timeout')
-    except Exception:
-        pass
-
-    try:
-        open_sockets.remove(ws)
-    except Exception:
-        pass
+        ip = websocket_hub.client_ip(
+            request.remote_addr or '0.0.0.0',
+            request.headers.get('CF-Connecting-IP'), _ws_trusted_proxies,
+        )
+        if not open_sockets.admit(ws, ip):
+            return
+        send_recent_data(ws)
+        open_sockets.activate(ws)
+        ping_window = time.monotonic()
+        ping_count = 0
+        while open_sockets.contains(ws):
+            message = ws.receive(timeout=12)
+            if message is None:
+                break
+            # Only the existing heartbeat protocol is accepted. Bound reply work
+            # as well as message size; real clients send one ping every 6 seconds.
+            now = time.monotonic()
+            if now - ping_window >= 1:
+                ping_window, ping_count = now, 0
+            ping_count += 1
+            if message != '!ping' or ping_count > 10:
+                break
+            open_sockets.send(ws, '!pong')
+    finally:
+        open_sockets.disconnect(ws)
 
 
 def send_notification(title_en, title_ja, message_en, message_ja, tag="alerts"):
