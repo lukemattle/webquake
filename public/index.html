@@ -12,12 +12,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://unpkg.com">
-    <!-- Only the weights actually used (400/600/700 + italic 400 for the PLUM note) -->
+    <!-- Used font weights; italic 400 is for the PLUM note. -->
     <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <!-- Start the big region downloads in parallel with the scripts; app.js
-         fetch()es these same URLs once it runs. crossorigin is required for
-         as="fetch" preloads to match a default same-origin fetch(). -->
+    <!-- Preload region data alongside scripts. crossorigin matches the
+         same-origin fetch mode used by app.js. -->
     <link rel="preload" href="/japan-regions.geojson" as="fetch" crossorigin>
     <link rel="preload" href="/tsunami-regions.geojson" as="fetch" crossorigin>
     <link rel="preload" href="/taiwan-regions.geojson" as="fetch" crossorigin>
@@ -86,7 +85,7 @@
         <span class="sp-int-bar" id="sp-pga-bar"></span>
         <span id="sp-pga-label"></span>
     </div>
-    <div class="sp-int" id="sp-borehole-row" style="display:none;margin-top:3px;opacity:0.8" title="Underground station">
+    <div class="sp-int" id="sp-borehole-row" style="display:none;margin-top:3px;opacity:0.8" title="Underground station. Colours are for illustration only and should not be compared directly with surface stations, as underground observation conditions differ.">
         <span class="sp-int-bar" id="sp-borehole-bar"></span>
         <span id="sp-borehole-label" style="font-size:0.88em;text-decoration:underline dotted;text-underline-offset:2px;cursor:help"></span>
     </div>
@@ -94,7 +93,7 @@
     <div class="quake-source" id="sp-source-badge" style="display:none;margin-top:4px;text-align:right"></div>
 </div>
 
-<!-- Taiwan/CWA earthquake report popup, opened by clicking the '__tw_past__' epicenter marker -->
+<!-- CWA report popup for the __tw_past__ epicenter marker -->
 <div id="tw-quake-popup">
     <button class="sp-close" onclick="dismissTwQuakePopup()" aria-label="Close">✕</button>
     <div class="sp-name-row">
@@ -145,7 +144,7 @@
     </div>
 </div>
 
-<!-- Current regional estimates and EEW forecasts, positioned below the observed summary. -->
+<!-- Regional estimates and EEW forecasts below the observed summary -->
 <section id="regions-panel" aria-labelledby="regions-title" hidden>
     <button id="regions-toggle" type="button" onclick="toggleRegionPanel()" aria-expanded="true" aria-controls="regions-content">
         <span id="regions-title"><span class="en">Regions</span><span class="ja">地域</span><span class="zh">區域</span></span>

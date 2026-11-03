@@ -3,13 +3,8 @@ import sqlite3, os, threading
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_DB = os.path.join(_BASE_DIR, 'output_data.db')
 
-# One persistent SQLite connection per thread, created lazily on first use and
-# reused thereafter. Opening a fresh connection (and re-asserting PRAGMAs) on
-# every operation was wasteful: WAL/synchronous/busy_timeout are durable or
-# per-connection settings that only need to be applied once, and history writes
-# happen at least ~1-2x/sec at idle (far more during a quake). Connections are
-# left open between `with` blocks; we still commit/rollback per block so no read
-# transaction lingers to block WAL checkpointing.
+# Reuse one connection per thread; commit or roll back each with block
+# to release transactions without reopening the connection.
 _local = threading.local()
 
 
@@ -24,9 +19,7 @@ def _get_conn(db_name):
         except Exception:
             pass
     conn = sqlite3.connect(db_name, timeout=30, check_same_thread=False)
-    # WAL lets readers and the writer proceed concurrently instead of
-    # exclusively locking the whole file; busy_timeout makes any residual
-    # lock contention retry briefly instead of raising "database is locked".
+    # WAL permits concurrent readers; retry brief write contention for up to 5s.
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA synchronous=NORMAL')
     conn.execute('PRAGMA busy_timeout=5000')

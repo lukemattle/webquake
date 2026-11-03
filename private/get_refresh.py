@@ -1,14 +1,8 @@
-"""One-off helper: obtain a DMDATA refresh token for your own DM-DSS account.
+"""Obtain a refresh token for your DMDATA account: python get_refresh.py.
 
-Set WEBQUAKE_DMDATA_CLIENT_ID and WEBQUAKE_DMDATA_CLIENT_SECRET first, then:
-
-    python get_refresh.py
-
-A browser opens for you to authorise the application. The refresh token it
-prints is what WEBQUAKE_DMDATA_REFRESH_TOKEN expects. It is a long-lived
-credential with full access to your paid subscription - treat it as a password,
-and never commit it.
-"""
+Set WEBQUAKE_DMDATA_CLIENT_ID and WEBQUAKE_DMDATA_CLIENT_SECRET first.
+Browser authorisation prints a token for WEBQUAKE_DMDATA_REFRESH_TOKEN.
+This long-lived token grants subscription access; keep it secret."""
 
 import sys
 import dmdws

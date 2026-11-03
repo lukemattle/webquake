@@ -1,11 +1,8 @@
-const VERSION = 'v1.1';
+const VERSION = 'v1.1.1';
 const FRONTEND_ASSET_BASE = new URL('.', document.currentScript.src);
 
-// ── Data source filter (Both / Japan only / Taiwan only) ───────────────
-// Purely a display filter: underlying WS data still arrives and is stored
-// as normal regardless of this setting (so switching back doesn't need a
-// refetch/reconnect) — only the rendering functions below check it. See
-// showJapan()/showTaiwan() call sites throughout for what's actually gated.
+// Data source filter (Both / Japan only / Taiwan only)
+// Filter rendering only; keep receiving and caching data for country switches.
 const DATA_SOURCE_KEY = 'webquake_data_source';
 let dataSourceFilter = localStorage.getItem(DATA_SOURCE_KEY) || 'both';
 function showJapan()  { return dataSourceFilter !== 'tw'; }
@@ -24,20 +21,16 @@ function setDataSourceFilter(mode) {
     localStorage.setItem(DATA_SOURCE_KEY, mode);
     updateDataSourceFilterUI();
     reapplyDataSourceFilter();
-    // Changing the global setting is a fresh decision - drop any standing
-    // sidebar-specific override so the sidebar goes back to following it.
+    // Reset the sidebar override when the global filter changes.
     sidebarFilterOverride = null;
     try { localStorage.removeItem(SIDEBAR_FILTER_KEY); } catch(e) {}
     updateSidebarFilterUI();
     renderSidebar(lastQuakeData);
 }
 
-// ── Earthquake History sidebar filter (Both / JP / TW) ─────────────────
-// Independent of dataSourceFilter above (which gates the whole map/UI) -
-// this only filters which entries render in the #quake-sidebar list.
-// Defaults to following dataSourceFilter; a click on one of the sidebar's
-// own Both/JP/TW buttons sets an explicit override that sticks until the
-// global Data Source setting is changed again (see setDataSourceFilter).
+// Earthquake History sidebar filter (Both / JP / TW)
+// Follow the global filter until a sidebar button sets an override.
+// Changing the global filter resets that override.
 const SIDEBAR_FILTER_KEY = 'webquake_sidebar_filter';
 let sidebarFilterOverride = localStorage.getItem(SIDEBAR_FILTER_KEY) || null;
 
@@ -61,12 +54,11 @@ function setSidebarFilter(mode) {
     renderSidebar(lastQuakeData);
 }
 
-// ── OneSignal push notifications ────────────────────────────────────
+// OneSignal push notifications
 const NOTIF_LANG_KEY = 'webquake_notif_lang';
 
 function getNotificationLanguage() {
-    // No zh notification content exists (see main.py's en/ja-only NTFY_TOPIC_*/
-    // OneSignal categories) - a zh UI with no explicit override falls back to en.
+    // Chinese UI defaults to English notifications; only EN/JA content exists.
     const stored = localStorage.getItem(NOTIF_LANG_KEY);
     if (stored) return stored;
     return currentLanguage === 'zh' ? 'en' : currentLanguage;
@@ -108,11 +100,9 @@ async function refreshNotificationUI() {
     updateNtfyUI();
 }
 
-// ── ntfy push notifications (self-hosted, parallel to OneSignal) ───────
-// Replace with your self-hosted ntfy host (no scheme) and topic names —
-// these must match the WEBQUAKE_NTFY_TOPIC_*_EN / *_JA vars configured on
-// the backend. Topics are split by language since ntfy has no per-subscriber
-// language preference. Topics are public-read, so none of this is a secret.
+// ntfy push notifications (self-hosted, parallel to OneSignal)
+// These public topic names must match WEBQUAKE_NTFY_TOPIC_*_EN / *_JA.
+// ntfy uses separate topics for each notification language.
 const NTFY_SERVER = 'SERVER_URL';
 const NTFY_TOPICS = {
     en: { alerts: 'webquake-alerts-en', forecasts: 'webquake-forecasts-en' },
@@ -141,9 +131,7 @@ function renderNtfySubscribeLinks() {
         { key: langTopics.alerts, en: 'EEW &amp; Tsunami Alerts', ja: '緊急地震速報・津波警報', zh: '緊急地震速報與海嘯警報' },
         { key: langTopics.forecasts, en: 'Earthquake Forecasts', ja: '地震動予測', zh: '地震動預測' },
     ];
-    // lang here is always 'en'/'ja' (getNotificationLanguage falls back off
-    // 'zh' - no zh notification content exists), but this surrounding chrome
-    // text is still shown to zh UI users, so it gets its own zh translation.
+    // Notification language is EN/JA; subscribe instructions follow the UI language.
     let html = `<div class="settings-note">
         <span class="en">Showing topics for notification language: ${lang.toUpperCase()}. Change it above to switch.</span>
         <span class="ja">通知言語: ${lang.toUpperCase()} のトピックを表示中です。上の設定で切り替えられます。</span>
@@ -165,8 +153,7 @@ function renderNtfySubscribeLinks() {
             <span class="zh">若尚未安裝應用程式，請先安裝後再次點擊訂閱連結。伺服器：${NTFY_SERVER}</span>
         </div>`;
     } else if (platform === 'ios') {
-        // The ntfy iOS app doesn't support ntfy:// deep links yet (Android-only),
-        // so subscribing has to be done manually inside the app.
+        // On iOS, subscribe manually inside ntfy; these deep links are Android-only.
         html += `<a class="ntfy-btn" href="${NTFY_APP_LINKS.ios}" target="_blank" rel="noopener">
             <span class="en">Get the ntfy app</span><span class="ja">ntfyアプリを入手</span><span class="zh">取得ntfy應用程式</span>
         </a>`;
@@ -223,7 +210,8 @@ function updateNtfyUI() {
     if (!warning) return;
     let oneSignalOptedIn = false;
     if (window.OneSignal) {
-        try { oneSignalOptedIn = !!window.OneSignal.User.PushSubscription.optedIn; } catch (e) { /* not ready yet */ }
+        // The OneSignal user API may still be initialising.
+        try { oneSignalOptedIn = !!window.OneSignal.User.PushSubscription.optedIn; } catch (e) {}
     }
     warning.style.display = (enabled && oneSignalOptedIn) ? '' : 'none';
 }
@@ -297,7 +285,7 @@ updateNtfyUI();
 
 document.getElementById('bottom-version').textContent = '– ' + VERSION;
 
-// ── Audio ─────────────────────────────────────────────────────────────
+// Audio
 const sndNewQuake       = document.getElementById('snd-new-quake');
 const sndNewInfo        = document.getElementById('snd-new-info');
 const sndNewReport      = document.getElementById('snd-new-report');
@@ -305,7 +293,8 @@ const sndNewTsunami     = document.getElementById('snd-new-tsunami');
 const sndTsunamiWarning = document.getElementById('snd-tsunami-warning');
 
 function playSound(audio) {
-    if (replayActive) return; // never honk live alert sounds while showing historical data
+    // never honk live alert sounds while showing historical data
+    if (replayActive) return;
     audio.currentTime = 0;
     audio.play().catch(() => {});
 }
@@ -336,7 +325,7 @@ document.addEventListener('click', e => {
     }
 });
 
-// ── Intensity helpers ────────────────────────────────────────────────
+// Intensity helpers
 const INT_COLORS = {
     '0':'#E0E0E0',
     '1':'#A0D8EF','2':'#0000FF','3':'#00CC00','4':'#FFFF00',
@@ -375,10 +364,8 @@ function niedIntensityColor(raw, intensity) {
     return `rgb(${lower.rgb.join(',')})`;
 }
 
-// ── LPGM (long-period ground motion) helpers ──────────────────────────
-// JMA's 長周期地震動階級 runs 1–4. Class 0 means "no appreciable long-period
-// motion", which is what the vast majority of telegrams carry, so it is treated
-// as "nothing to show" rather than rendered as a zero.
+// LPGM (long-period ground motion) helpers
+// JMA LPGM classes run from 1–4; hide class 0 (no long-period motion).
 const LPGM_COLORS = { '1':'#FFE082', '2':'#FFB300', '3':'#FF6600', '4':'#D32F2F' };
 const LPGM_TEXT_DARK = new Set(['1','2']);
 
@@ -392,7 +379,7 @@ function lpgmClass(v) {
 function lpgmColor(v)     { return LPGM_COLORS[v] || '#555'; }
 function lpgmTextColor(v) { return LPGM_TEXT_DARK.has(v) ? '#111' : '#fff'; }
 
-// ── PGA helpers ───────────────────────────────────────────────────────
+// PGA helpers
 function pgaColor(gal) {
     if (gal == null) return '#555';
     if (gal >= 1000) return '#330000';
@@ -423,7 +410,7 @@ function formatPga(gal) {
     return gal.toFixed(2) + ' gal';
 }
 
-// ── Map init ─────────────────────────────────────────────────────────
+// Map init
 const DEFAULT_CENTER = [38.5, 138.5];
 const DEFAULT_ZOOM   = (window.innerWidth < window.innerHeight && window.innerWidth < 600) ? 5 : 6;
 const QUAKE_ZOOM     = 7;
@@ -486,19 +473,19 @@ L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/
 // Polygon tracing Japan's western extent, stepping north-east to follow
 // the Japan Sea coast, excluding Korea, Vladivostok, and Manchuria.
 const JAPAN_CLIP_POLY = [
-    [24, 122],  // SW Ryukyu
-    [31, 122],  // NW Ryukyu
-    [31, 128.5],  // Ryukyu-Kyushu junction (includes Goto islands at 128.84°E)
+    [24, 122], // SW Ryukyu
+    [31, 122], // NW Ryukyu
+    [31, 128.5], // Ryukyu-Kyushu junction (includes Goto islands at 128.84°E)
     [34.5, 128.5], // includes Tsushima (129.3°E) and Iki (129.7°E)
-    [35, 131],  // step east past Korea (Busan 129.08°E excluded)
-    [36, 132],  // W Honshu south (Shimane coast)
-    [38, 135],  // W Honshu central (Niigata, Sea of Japan)
-    [40, 138],  // W Honshu north (Akita, Sea of Japan)
-    [42, 139],  // Honshu-Hokkaido junction
-    [44, 141],  // SW Hokkaido
-    [46, 142],  // NW Hokkaido
-    [46, 147],  // NE Hokkaido
-    [24, 147],  // SE corner
+    [35, 131], // step east past Korea (Busan 129.08°E excluded)
+    [36, 132], // W Honshu south (Shimane coast)
+    [38, 135], // W Honshu central (Niigata, Sea of Japan)
+    [40, 138], // W Honshu north (Akita, Sea of Japan)
+    [42, 139], // Honshu-Hokkaido junction
+    [44, 141], // SW Hokkaido
+    [46, 142], // NW Hokkaido
+    [46, 147], // NE Hokkaido
+    [24, 147], // SE corner
 ];
 function updateJapanLabelClip() {
     const pane = map.getPane('japanLabels');
@@ -511,9 +498,7 @@ function updateJapanLabelClip() {
 updateJapanLabelClip();
 map.on('zoomend moveend', updateJapanLabelClip);
 
-// Second, independent label pane/clip for Taiwan — kept separate from the
-// Japan pane/polygon above so this is purely additive and can't regress the
-// existing Japan label clipping.
+// Clip Taiwan labels independently from Japan labels.
 map.createPane('taiwanLabels');
 map.getPane('taiwanLabels').style.zIndex = 250;
 L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
@@ -521,31 +506,18 @@ L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/
     pane: 'taiwanLabels',
     bounds: [[21, 118], [26, 123]]
 }).addTo(map);
-// Polygon tracing Taiwan's main island plus Penghu, Green Island, and Orchid
-// Island, deliberately excluding Kinmen, Wuqiu, and Matsu (governed by Taiwan
-// but sitting a few km off the Fujian coast — a label clip can't distinguish
-// them from mainland-China place names a few km away at higher zoom). The
-// west edge hugs Taiwan's actual (tilted) coastline — further west at low
-// latitudes, further east up north — and only bulges out to sea for Penghu
-// in the narrow latitude band Penghu actually sits in; an earlier version
-// bulged the whole north edge west to 119.3°E to reach Penghu, which also
-// dragged in Kinmen/Wuqiu/Fujian-coast labels at Taipei's latitude.
-// The west/south edge carries a large margin beyond the literal coastline —
-// a city label's text renders offset from its real anchor point (CARTO's
-// label placement, not a simple point marker), so even an 80km buffer still
-// clipped Tainan/Kaohsiung mid-word. There's no risk in being generous here:
-// at Kaohsiung's latitude the nearest mainland China territory is hundreds
-// of km further west (Guangdong), so only the NORTH edge (near Kinmen/Matsu/
-// the Fujian coast, ~24-26°N) actually needs to stay tight.
+// Include Taiwan, Penghu, Green Island and Orchid Island in the label clip.
+// Keep the northern edge tight to exclude nearby Fujian-coast labels.
+// Allow wider southern margins so offset city labels are not cut mid-word.
 const TAIWAN_CLIP_POLY = [
-    [21.0, 118.3],  // SW corner, far out to sea — no nearby landmass to worry about at this latitude
-    [21.6, 121.9],  // SE corner, includes Orchid I. (~121.55°E) and Green I.
-    [23.0, 122.6],  // east coast, offshore of Hualien/Taitung
-    [25.5, 122.6],  // NE corner, north of Keelung
-    [25.5, 120.9],  // north edge, west end near Taoyuan/Hsinchu's longitude — the one boundary that must stay tight, east of Matsu (~119.9°E) and the Fujian coast
-    [24.3, 120.0],  // down the west coast toward Taichung's longitude
-    [23.6, 118.9],  // bulge west for the Penghu Islands (~119.3-119.7°E), with margin
-    [22.0, 118.4],  // wide margin down through Tainan/Kaohsiung/Pingtung's latitude — safe this far south
+    [21.0, 118.3], // Southwest sea margin for offset city labels.
+    [21.6, 121.9], // SE corner, includes Orchid I. (~121.55°E) and Green I.
+    [23.0, 122.6], // east coast, offshore of Hualien/Taitung
+    [25.5, 122.6], // NE corner, north of Keelung
+    [25.5, 120.9], // Stay east of Matsu and Fujian labels.
+    [24.3, 120.0], // down the west coast toward Taichung's longitude
+    [23.6, 118.9], // bulge west for the Penghu Islands (~119.3-119.7°E), with margin
+    [22.0, 118.4], // Southern margin for offset city labels.
 ];
 function updateTaiwanLabelClip() {
     const pane = map.getPane('taiwanLabels');
@@ -558,11 +530,8 @@ function updateTaiwanLabelClip() {
 updateTaiwanLabelClip();
 map.on('zoomend moveend', updateTaiwanLabelClip);
 
-// Applies the current dataSourceFilter across every piece it affects: the two
-// label panes, all four station canvases, epicenter markers, and the EEW/
-// past-quake popups (dismissed if their country just got hidden). Called on
-// every setDataSourceFilter() and once at startup so a persisted non-default
-// choice takes effect immediately without waiting for the next WS message.
+// Apply the country filter to labels, stations, markers and popups.
+// Also run at startup to apply the saved choice before data arrives.
 function reapplyDataSourceFilter() {
     map.getPane('japanLabels').style.display  = showJapan()  ? '' : 'none';
     map.getPane('taiwanLabels').style.display = showTaiwan() ? '' : 'none';
@@ -573,10 +542,8 @@ function reapplyDataSourceFilter() {
     scheduleRedrawTwPtsStations();
     applyEpicenterVisibility();
     renderEewPanels();
-    // Seismic wave circles (P/S-wave animation) self-correct on the next
-    // animateWaves() frame via the same key-prefix check, no call needed here.
-    // regionLayer (JMA forecast-region intensity tint) may not exist yet at
-    // startup — it loads async — hence the null check.
+    // Wave circles apply the filter on their next animation frame.
+    // The region layer may still be loading at startup.
     if (regionLayer) {
         if (showJapan() && !map.hasLayer(regionLayer)) map.addLayer(regionLayer);
         else if (!showJapan() && map.hasLayer(regionLayer)) map.removeLayer(regionLayer);
@@ -585,62 +552,42 @@ function reapplyDataSourceFilter() {
         if (showTaiwan() && !map.hasLayer(twRegionLayer)) map.addLayer(twRegionLayer);
         else if (!showTaiwan() && map.hasLayer(twRegionLayer)) map.removeLayer(twRegionLayer);
     }
-    // Tsunami is JMA-only (out of scope for Taiwan) — re-drive coastlines/obs
-    // circles/card from current state; drawTsunamiCoastlines/
-    // drawOffshoreObsRegions/renderTsunamiCard each check showJapan()
-    // themselves and clear when hidden, so this one call handles both
-    // directions (hide and reveal) correctly.
+    // Refresh JMA tsunami layers; each renderer applies showJapan().
     if (activeTsunamiData) drawTsunamiCoastlines(activeTsunamiData); else clearTsunamiCoastlines();
     if (activeTsunamiObs) drawOffshoreObsRegions(activeTsunamiObs); else clearOffshoreObsRegions();
     renderTsunamiCard();
     // Restore the filtered live summary immediately when Japan is shown again,
     // without waiting for another station diff.
     refreshNiedSpatialState();
-    // #station-popup is shared between NIED/S-net and ExpTech stations (see
-    // showStationPopup's 'source' param) with no cheap way to tell which
-    // country a currently-open one belongs to, so any filter change just
-    // dismisses it unconditionally — low-stakes, a click reopens it. The
-    // Taiwan quake popup's target country is unambiguous, so that one only
-    // closes when Taiwan specifically becomes hidden.
+    // Dismiss the shared station popup on any country change.
+    // The Taiwan report popup only closes when Taiwan becomes hidden.
     dismissStationPopup();
     if (!showTaiwan()) dismissTwQuakePopup();
 }
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-// ── Layer state ───────────────────────────────────────────────────────
+// Layer state
 let regionLayer   = null;
-const epicenterMarks = new Map(); // key → Leaflet marker; EEW keys are String(origin_time), JMA past quake uses '__past__', Taiwan/CWA past quake uses '__tw_past__'
+// Event key → marker; past keys: __past__, __tw_past__.
+const epicenterMarks = new Map();
 const activeEews     = new Map(); // key → EEW data object
-const activeTwEews   = new Map(); // key → tw_eew data object; epicenter/wave keys are 'tw:'+key, kept separate from JMA's activeEews
+const activeTwEews   = new Map(); // Event key → Taiwan EEW; marker/wave keys use tw:*.
 const seenEewOrigins    = new Set(); // origin_times we've already sounded for
-// canonical quake key (event_id/ctt, or a time-matched stand-in) → { ts, fp } of the info
-// last announced with new_info.mp3, shared across the WQ (live telegram) and JMA history
-// sources so the same quake doesn't chime twice just because a second source reported it.
+// Canonical quake key → { ts, fp } of the last info sound.
+// Share this across live and JMA history sources to avoid duplicate chimes.
 const quakeInfoSoundState = new Map();
 let hasPastQuakeData = false;
 let activePastQuakeEventId = null;
 let activePastQuakeTime = null;
 let activePastQuakeAreaIntensities = null;
-// True once a report carrying per-station data (VXSE53) has been seen for the
-// current past quake, so later follow-up reports (e.g. a subsequent VXSE52
-// lacking area_intensities) keep refreshing the already-revealed points instead
-// of re-hiding them.
+// Once VXSE53 reveals station points, later epicenter-only revisions keep them.
 let pastQuakeStationsShown = false;
 
-// ── Epicentre pane ──────────────────────────────────────────────────────
-// Any Leaflet pane (markerPane, and this one) lives inside Leaflet's
-// internal _mapPane, which gets a CSS `transform` for panning — that
-// transform makes _mapPane its own stacking context, so z-index set on
-// panes *inside* it can never out-rank a sibling of _mapPane that has an
-// explicit z-index (like the raw <canvas> station overlays below, which
-// are appended straight to the map container so their manual
-// containerPoint-based redraw logic isn't double-transformed by panning).
-// So the epicentre *icon* marker is rendered as a plain DOM element in
-// epicenterLayer (a sibling of _mapPane, see below) instead of a Leaflet
-// marker, guaranteeing it stacks above those canvases. The PLUM dashed
-// ring is a true geographic circle (radius in metres) that's harder to
-// reproduce by hand, so it stays a Leaflet vector in this pane.
+// Epicentre pane
+// Leaflet's transformed map pane cannot stack above our station canvases.
+// Place epicenter icons in a sibling DOM layer; keep the geographic PLUM
+// ring in a Leaflet vector pane.
 map.createPane('epicenterPane');
 map.getPane('epicenterPane').style.zIndex = 620;
 
@@ -666,31 +613,26 @@ function removeEpicenterMark(key) {
     epicenterMarks.delete(key);
 }
 
-// ── Seismic wave pane ──────────────────────────────────────────────────
+// Seismic wave pane
 map.createPane('wavesPane');
 map.getPane('wavesPane').style.zIndex = 300;
 map.getPane('wavesPane').style.pointerEvents = 'none';
 
-// Vector layers (our wave circles) get projected using the map's live pixel
-// origin, but the SVG/Canvas renderer container is repositioned via a CSS
-// transform that's only rebased on 'moveend' — so creating/moving a circle
-// mid-flyTo double-applies the pan/zoom delta and it renders far from its
-// true position until the flight (or chain of flights, if reports keep
-// re-triggering flyTo) finally settles. Track that window so wave rendering
-// can pause until it's safe. flyTo/flyToBounds fire 'movestart' immediately
-// but only fire 'moveend' once the animation truly completes (repeated
-// flyTo calls restart it via map._stop(), which doesn't fire 'moveend').
+// Track map flights: Leaflet rebases vector transforms only on moveend.
+// Repeated flyTo calls can restart a flight without firing moveend.
 let mapIsMoving = false;
 map.on('movestart', () => { mapIsMoving = true; });
 map.on('moveend', () => { mapIsMoving = false; });
 
-// ── Tsunami region colouring ──────────────────────────────────────────
+// Tsunami region colouring
 let tsunamiLayer = null;
-const tsunamiRegionCentroids = {}; // region code → [lat, lon], from tsunami-regions.geojson coastlines
+// region code → [lat, lon], from tsunami-regions.geojson coastlines
+const tsunamiRegionCentroids = {};
 
 function drawTsunamiCoastlines(data) {
     if (!tsunamiLayer) return;
-    if (!showJapan()) { clearTsunamiCoastlines(); return; } // tsunami is JMA-only, out of scope for Taiwan
+    // tsunami is JMA-only, out of scope for Taiwan
+    if (!showJapan()) { clearTsunamiCoastlines(); return; }
     const codes      = data.region_codes || [];
     const kindCodes  = data.kind_codes || [];
     const colorMap = {};
@@ -713,8 +655,9 @@ function clearTsunamiCoastlines() {
     if (tsunamiLayer) tsunamiLayer.setStyle({ color: 'transparent', weight: 0, fillOpacity: 0 });
 }
 
-// ── Load regions GeoJSONs ─────────────────────────────────────────────
-let _regionFeatureBounds = null; // [{f, bbox:[minLon,minLat,maxLon,maxLat]}] for point-in-region lookups
+// Load regions GeoJSONs
+// [{f, bbox:[minLon,minLat,maxLon,maxLat]}] for point-in-region lookups
+let _regionFeatureBounds = null;
 const regionLayersByCode = new Map();
 // Bundle every coded region name so English never depends on a second fetch.
 // Base names follow enums/eng_codes.py; island entries cover the remaining polygons.
@@ -953,8 +896,7 @@ function findRegionCodeForPoint(lat, lon) {
     return null;
 }
 
-// Fallback region colouring for reports with no area_intensities (e.g. epicenter-only
-// telegrams): bucket each station into its containing region and take the max per region.
+// When area_intensities are missing, use the highest station class per region.
 function computeRegionIntensitiesFromStations(stations) {
     if (!_regionFeatureBounds || !stations || !stations.length) return [];
     const maxByCode = {};
@@ -1021,6 +963,7 @@ class NiedSpatialFilter {
             }
             const neighbours = this.neighbours.get(key);
             if (!neighbours.length) continue;
+            // Missing readings count against support from the fixed neighbour set.
             const supporters = neighbours.filter(otherKey => intRank(current.get(otherKey)?.int) >= 1).length;
             if (supporters < Math.ceil(neighbours.length / 2)) continue;
             acceptedStations.push(station);
@@ -1041,16 +984,9 @@ class NiedSpatialFilter {
     }
 }
 
-// ── Taiwan region coloring (county/city, from taiwan-regions.geojson) ──
-// CWA reports don't come with a JMA-style per-region-code area_intensities
-// array — they only give per-station readings — so unlike Japan, station
-// bucketing (mirroring computeRegionIntensitiesFromStations above) is the
-// *primary* path here, not just a fallback. This also sidesteps needing a
-// CN/EN name-matching step for the join itself: bucketing by point-in-polygon
-// against each station's own lat/lon works regardless of what language (or
-// exact wording) a report's location text is in — matching by county name
-// string would be far more fragile (CWA's own "Location"/"CountyName" fields
-// aren't guaranteed to equal this geojson's COUNTYNAME exactly).
+// Taiwan region coloring (county/city, from taiwan-regions.geojson)
+// CWA supplies station readings without JMA-style region codes.
+// Group stations by point-in-polygon to avoid matching translated place names.
 let twRegionLayer = null;
 let _twRegionFeatureBounds = null;
 let _twAreaIntensities = []; // [{code: COUNTYNAME (Chinese), max_int}]
@@ -1146,7 +1082,7 @@ fetch(new URL('taiwan-regions.geojson', FRONTEND_ASSET_BASE))
         if (!showTaiwan()) map.removeLayer(twRegionLayer);
     });
 
-// ── Tsunami region pin (clicking a forecast/observation row in the panel) ──
+// Tsunami region pin (clicking a forecast/observation row in the panel)
 const TSUNAMI_REGION_ZOOM = 8;
 let tsunamiRegionMark = null;
 const TSUNAMI_PIN_HTML = '<div style="font-size:22px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:#4fc3f7;text-shadow:0 0 6px #000,0 0 2px #000;line-height:1">📍</div>';
@@ -1173,8 +1109,9 @@ document.getElementById('tsunami-panel').addEventListener('click', e => {
     if (code) focusTsunamiRegion(code);
 });
 
-// ── Region colouring ──────────────────────────────────────────────────
-let eewRegionIntensities = new Map(); // code → {max_int, eventIds} for the highest active forecast
+// Region colouring
+// code → {max_int, eventIds} for the highest active forecast
+let eewRegionIntensities = new Map();
 let reportRegionIntensities = new Map();
 let reportRegionViewActive = false;
 let _visibleRegionSources = 0; // live=1, EEW=2, official report=4
@@ -1280,7 +1217,7 @@ function clearReportRegionColors() {
     renderRegionColors();
 }
 
-// ── Regional comparison and explicit selection ────────────────────────
+// Regional comparison and explicit selection
 let regionRows = [];
 let regionRowElements = new Map();
 let regionsCollapsed = false;
@@ -1306,7 +1243,7 @@ function getRegionRows() {
         live: liveNiedRegionIntensities.get(code) ?? null,
         forecast: eewRegionIntensities.get(code)?.max_int ?? null
     })).sort((a, b) =>
-        Math.max(intRank(b.live), intRank(b.forecast)) - Math.max(intRank(a.live), intRank(a.forecast)) ||
+        intRank(b.live) - intRank(a.live) ||
         a.code.localeCompare(b.code)
     );
 }
@@ -1526,7 +1463,7 @@ document.getElementById('regions-list').addEventListener('click', event => {
 });
 map.on('move zoom resize', positionRegionPopup);
 
-// ── Collision-filtered regional map labels ────────────────────────────
+// Collision-filtered regional map labels
 const REGION_LABEL_GAP = 6;
 const regionLabelShapeCache = new Map();
 let placedRegionLabels = [];
@@ -1741,10 +1678,8 @@ function renderRegionMapLabels() {
 map.on('movestart zoomstart', clearRegionMapLabels);
 map.on('moveend zoomend resize', scheduleRegionMapLabels);
 
-// ── Adaptive map key / legend ──────────────────────────────────────────
-// Shows intensity levels from 1 up to the highest currently shown on the
-// map, and tsunami levels from "Slight sea level change" up to the highest
-// currently active warning level.
+// Adaptive map key / legend
+// Show intensity and tsunami levels up to the highest currently displayed.
 const INT_LEVELS = ['1','2','3','4','5-','5+','6-','6+','7'];
 const TSUNAMI_LEVELS = ['Slight sea level change','Advisory','Warning','Major Warning'];
 const TSUNAMI_LEVEL_LABELS_EN = {
@@ -1766,18 +1701,14 @@ const TSUNAMI_LEVEL_LABELS_ZH = {
     'Major Warning':'大海嘯警報',
 };
 
-// Max intensity ranks are cached at data-change time (refreshEewRegionColors,
-// _setStationData, setJmaStations) so this stays O(1) — updateMapKey runs on
-// every canvas redraw, i.e. every animation frame during a pan.
+// Cache maximum ranks when data changes; this runs on every canvas redraw.
 let _maxEewIntRank = -1;
 let _maxReportIntRank = -1;
 let _maxLiveStationRank = -1;
 let _maxJmaStationRank = -1;
 
 function currentMaxIntRank() {
-    // All three inputs here are JMA-only (Taiwan doesn't feed this legend
-    // yet), so hide it entirely in Taiwan-only mode rather than showing a
-    // rank computed from data the user asked to hide.
+    // These intensity inputs are JMA-only; hide them in Taiwan-only mode.
     if (!showJapan()) return -1;
     let max = reportRegionViewActive ? _maxReportIntRank : _maxEewIntRank;
     if (!liveStationsHidden && _maxLiveStationRank > max) max = _maxLiveStationRank;
@@ -1786,8 +1717,7 @@ function currentMaxIntRank() {
 }
 
 function currentMaxTsunamiRank() {
-    // Tsunami is JMA-only and explicitly out of scope for Taiwan (see plan) —
-    // no Taiwan tsunami data exists in this app at all.
+    // Tsunami data is JMA-only.
     if (!showJapan() || !activeTsunamiData) return -1;
     return TSUNAMI_LEVELS.indexOf(activeTsunamiData.warning_level);
 }
@@ -1846,34 +1776,25 @@ function updateMapKey() {
     el.title = t('Map key', '凡例', '圖例');
 }
 
-// ── NIED station dots (canvas overlay) ───────────────────────────────
+// NIED station dots (canvas overlay)
 let lastStations = [];
 const niedSpatialFilter = new NiedSpatialFilter();
 let supportedNiedStations = [];
 let liveNiedAreaIntensities = [];
 let liveNiedRegionIntensities = new Map();
-// Pre-split/sorted views of lastStations, recomputed only when the data
-// changes (in updateStations) rather than on every redraw — redraws also
-// fire on every map move frame, where re-sorting would be wasted work.
+// Pre-sort station views on data changes, avoiding a sort on every pan frame.
 let _zeroStations = [];
 let _activeStations = [];
 
-// Mirrors of the true live station state, kept up to date even while replay
-// is active (when live messages are diverted into replayLiveBuffer instead of
-// reaching displayData). Used to restore the live view exactly on exitReplay,
-// since the buffered messages may be diffs-only and would otherwise leave
-// unchanged stations missing.
+// Keep full live station state during replay so exitReplay can restore
+// unchanged stations absent from the buffered diffs.
 const liveStationCache = new Map();
 const liveEewCache = new Map(); // latest live JMA EEWs, kept separate from replay state
 const liveSnetCache = new Map();
 const liveTwStationCache = new Map();
 
-// Mirrors of the true live JMA quake-history list and WS-sourced sidebar
-// entries, kept up to date even while replay is active. Replay playback
-// overwrites lastQuakeData/wsQuakeBuffer with historical snapshots, and
-// jma_history is only re-broadcast when a new quake arrives — so without
-// these mirrors the sidebar could stay stuck on stale replay data
-// indefinitely after exitReplay.
+// Keep live sidebar data separate from replay snapshots. History broadcasts
+// only on changes, so exiting replay must restore these live copies.
 let liveQuakeHistory = null;
 let liveWsQuakeBuffer = null;
 let liveTwQuakeHistory = null; // mirrors liveQuakeHistory for lastTwHistoryData
@@ -1914,8 +1835,7 @@ function redrawStations() {
     for (const [group, isZero] of [[_zeroStations, true], [_activeStations, false]]) {
         group.forEach(st => {
             const pt     = map.latLngToContainerPoint(st._ll || [st.lat, st.lon]);
-            // Skip dots outside the viewport — when zoomed in (i.e. during an
-            // actual quake) most of the ~2000 stations are off-screen.
+            // Cull off-screen stations before drawing.
             if (pt.x < -diam || pt.y < -diam || pt.x > sz.x + diam || pt.y > sz.y + diam) return;
             const r      = diam / 2;
             const opacity = isZero ? zeroOpacity(st.raw ?? -3) : 1;
@@ -1950,9 +1870,7 @@ function redrawStations() {
     ctx.globalAlpha = 1;
 }
 
-// Coalesce redraws to at most one per animation frame. Map 'move' fires every
-// frame during a pan, and WS station updates arrive ~3×/s; without this the two
-// sources stack redundant full-canvas redraws on the same frame.
+// Coalesce map movement and station updates into one redraw per frame.
 let _redrawStationsPending = false;
 function scheduleRedrawStations() {
     if (_redrawStationsPending) return;
@@ -1966,7 +1884,7 @@ resizeStationCanvas();
 map.on('resize', () => { resizeStationCanvas(); scheduleRedrawStations(); dismissStationPopup && dismissStationPopup(); });
 map.on('move zoom', () => { scheduleRedrawStations(); dismissStationPopup && dismissStationPopup(); });
 
-// ── Borehole toggle ───────────────────────────────────────────────────
+// Borehole toggle
 let boreholeVisible = true;
 
 function toggleBoreholeVisible() {
@@ -1976,9 +1894,10 @@ function toggleBoreholeVisible() {
     redrawStations();
 }
 
-// ── S-net seafloor station dots (canvas overlay) ─────────────────────
+// S-net seafloor station dots (canvas overlay)
 let lastSnetStations = [];
-let _snetSorted = []; // lastSnetStations sorted by intensity; recomputed on data change only
+// lastSnetStations sorted by intensity; recomputed on data change only
+let _snetSorted = [];
 let snetVisible = true;
 
 function toggleSnetVisible() {
@@ -2064,13 +1983,9 @@ resizeSnetCanvas();
 map.on('resize', () => { resizeSnetCanvas(); scheduleRedrawSnetStations(); });
 map.on('move zoom', scheduleRedrawSnetStations);
 
-// ── Taiwan/ExpTech live station dots (canvas overlay) ─────────────────
-// Mirrors the NIED live-station rendering pattern (per-station dots,
-// zero/labeled split, diff-based updates) — intensity labels are expected
-// to already be bucketed into the same '0'..'7'/'5-'/'5+' etc. strings NIED
-// stations use, so intColor/intRank/intTextColor are reused as-is. Whether
-// CWA's own scale needs a different bucketing/labeling is an open question
-// for the backend poller that will feed this, not this rendering layer.
+// Taiwan/ExpTech live station dots (canvas overlay)
+// ExpTech station intensities arrive as JMA class strings, so reuse the
+// shared intensity colour, rank and text helpers.
 let lastTwStations = [];
 let _twZeroStations = [];
 let _twLabeledStations = [];
@@ -2170,14 +2085,9 @@ resizeTwStationCanvas();
 map.on('resize', () => { resizeTwStationCanvas(); scheduleRedrawTwStations(); });
 map.on('move zoom', scheduleRedrawTwStations);
 
-// ── Taiwan/CWA past-quake station dots (own canvas, mirrors jmaCanvas below) ──
-// CWA reports carry a full per-station intensity list (Intensity.ShakingArea[].
-// EqStation[]), stored server-side in tw_quake_stations and exposed via
-// /api/tw_quake_points/<earthquake_no> - this renders that snapshot when a
-// sidebar history entry is opened, same as jmaStations does for JMA's
-// /api/quake_points/<event_id>. Kept as its own canvas/state rather than
-// reusing jmaCanvas/jmaStations because those gate on showJapan(), which
-// would wrongly hide Taiwan station dots in "Taiwan only" mode.
+// Taiwan/CWA past-quake station dots (own canvas, mirrors jmaCanvas below)
+// Render CWA station snapshots from /api/tw_quake_points/<earthquake_no>.
+// Use a separate canvas so showJapan() does not hide Taiwan report stations.
 let twPtsStations = [];
 let _twPtsSorted = [];
 let twPtsStationsEventId = null; // the earthquake_no currently shown, or null
@@ -2266,7 +2176,7 @@ async function fetchTwPoints(earthquakeNo) {
     } catch(e) { console.warn('TW points fetch failed', e); }
 }
 
-// ── JMA station dots (past quake point data) ─────────────────────────
+// JMA station dots (past quake point data)
 let jmaStations = [];
 let _jmaSorted = []; // jmaStations sorted by intensity; recomputed on data change only
 function setJmaStations(arr) {
@@ -2281,7 +2191,8 @@ let jmaStationsVisible = false;
 let jmaPointsIndex = []; // [{ts, lat, lon, st}] — events with epicenter/station data
 let jmaSidebarActiveTs = null; // origin time (UTC unix sec) of sidebar-selected quake
 let _jmaSidebarClearTimer = null;
-let liveStationsHidden = false; // true only when user manually opens a past-quake map view
+// true only when user manually opens a past-quake map view
+let liveStationsHidden = false;
 
 const jmaCanvas = document.createElement('canvas');
 jmaCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:451;';
@@ -2402,7 +2313,7 @@ function clearJmaStations() {
 
 function findJmaIndexEntry(originTs) {
     if (!originTs) return null;
-    // JMA bosai q.at is minute-truncated, so drift can be up to 59s; pick closest within 90s
+    // Allow 90s for minute-truncated JMA history timestamps (up to 59s drift).
     let best = null, bestDiff = Infinity;
     for (const e of jmaPointsIndex) {
         const d = Math.abs(e.ts - originTs);
@@ -2415,7 +2326,6 @@ function findJmaIndexEntry(originTs) {
 async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
     e.preventDefault();
     e.stopPropagation();
-    // Toggle off if already active
     if (jmaSidebarActiveTs === originTs) {
         clearJmaStations();
         removeEpicenterMark('__past__');
@@ -2423,7 +2333,6 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
         map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 });
         return;
     }
-    // Clear any previous state
     if (_jmaSidebarClearTimer) { clearTimeout(_jmaSidebarClearTimer); _jmaSidebarClearTimer = null; }
     setJmaStations([]);
     jmaStationsEventId = null;
@@ -2437,12 +2346,10 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
     document.getElementById('obs-panel').classList.add('visible');
     positionObsPanel();
     redrawStations();
-    // Auto-clear after 180s
     _jmaSidebarClearTimer = setTimeout(() => {
         _jmaSidebarClearTimer = null;
         if (jmaSidebarActiveTs === originTs) { clearJmaStations(); renderSidebar(lastQuakeData); map.flyTo(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true, duration: 1 }); }
     }, 180000);
-    // Fetch station data if available
     const indexEntry = findJmaIndexEntry(originTs);
     if (indexEntry && indexEntry.st) {
         try {
@@ -2465,16 +2372,13 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
     const lat = epicLat ?? indexEntry?.lat ?? null;
     const lon = epicLon ?? indexEntry?.lon ?? null;
     if (lat != null && lon != null) placeMarker('__jma_pts__', lat, lon);
-    // Region colors — show if this quake matches the active past quake, else clear
-    // any leftover EEW region colouring (the epicentre marker/wave animation of an
-    // active EEW are left alone — only the region shading needs to reflect this view).
+    // Show this report's region colours without clearing active EEW markers/waves.
     if (activePastQuakeAreaIntensities && activePastQuakeTime != null && Math.abs(originTs - activePastQuakeTime) < 90) {
         showReportRegionColors(activePastQuakeAreaIntensities);
     } else {
         const computed = computeRegionIntensitiesFromStations(jmaStations);
         showReportRegionColors(computed);
     }
-    // Auto-zoom
     if (jmaStations.length) {
         const bounds = L.latLngBounds(jmaStations.map(s => [s.lat, s.lon]));
         if (lat != null && lon != null) bounds.extend([lat, lon]);
@@ -2485,7 +2389,7 @@ async function handleJmaMapBtn(e, originTs, epicLat, epicLon) {
     renderSidebar(lastQuakeData);
 }
 
-// ── Station popup on click ────────────────────────────────────────────
+// Station popup on click
 const stationPopup = document.getElementById('station-popup');
 let selectedStationCode = null;
 let snetDataTime = null; // ms timestamp of last snet update
@@ -2555,7 +2459,11 @@ function showStationPopup(st, px, py, source) {
     if (_snetAgeInterval) { clearInterval(_snetAgeInterval); _snetAgeInterval = null; }
     if (isSnet && snetDataTime) {
         const prefix = t('Seafloor · ', '海底観測 · ', '海底觀測 · ');
-        const tip    = t('Seafloor stations update every ~1 min', '海底観測点は約1分ごとに更新されます', '海底觀測站約每1分鐘更新一次');
+        const tip = t(
+            'Seafloor stations update every ~1 min. Colours are for illustration only and should not be compared directly with land-based stations, as seafloor observation conditions differ.',
+            '海底観測点は約1分ごとに更新されます。色はあくまで参考表示です。海底と陸上では観測条件が異なるため、陸上の観測点の色と直接比較しないでください。',
+            '海底觀測站約每1分鐘更新一次。顏色僅供示意。由於海底與陸地的觀測條件不同，請勿直接與陸地觀測站的顏色比較。'
+        );
         const updateAge = () => {
             ageRow.innerHTML = `<span title="${tip}" style="text-decoration:underline dotted;text-underline-offset:2px;cursor:help">${prefix + _formatAge(snetDataTime)}</span>`;
         };
@@ -2571,10 +2479,7 @@ function showStationPopup(st, px, py, source) {
     scheduleRegionMapLabels();
 }
 
-// Taiwan/CWA earthquake report popup — opened by clicking the '__tw_past__'
-// epicenter marker (its own click listener, see placeMarker), dismissed by
-// any other click. Kept separate from the station click-popup above since
-// it shows a single active report rather than hit-testing a station array.
+// The Taiwan epicenter popup shows one report; station popups use hit-testing.
 let activeTwQuakeData = null;
 const twQuakePopup = document.getElementById('tw-quake-popup');
 
@@ -2622,8 +2527,6 @@ map.getContainer().addEventListener('click', function(e) {
         }
     }
 
-    // Taiwan/ExpTech stations — geographically distinct from Japan's, so hit-testing
-    // order relative to NIED doesn't matter, but checked here to sit alongside S-net.
     if (showTaiwan() && lastTwStations.length && !liveStationsHidden) {
         const twHitR = Math.max(6, Math.min(20, Math.round(z * 2 - 2))) / 2 + 4;
         let twClosest = null, twBest = Infinity;
@@ -2794,14 +2697,14 @@ function applyStationsDiff(changed, removed) {
     _setStationData([..._stationsByCode.values()]);
 }
 
-// ── P/S wave circles (computed client-side) ───────────────────────────
+// P/S wave circles (computed client-side)
 // Map keyed by event key → { lat, lon, depthKm, originTimeSec, pCircle, sCircle }
 const waveMap = new Map();
 let waveAnimFrame = null;
 
 // Simplified depth-dependent velocity model; returns surface epicentral radius in km
 function seismicRadiusKm(elapsedSec, depthKm, isS) {
-    // Effective velocities account for Pn head-wave dominance at typical EEW distances (100+ km)
+    // Effective velocities include Pn head waves at typical EEW distances (100+ km).
     const vp = depthKm < 30 ? 6.5 : depthKm < 60 ? 7.0 : depthKm < 100 ? 7.5 : 8.0;
     const v  = isS ? vp / 1.73 : vp;
     const hypo = v * elapsedSec;
@@ -2845,10 +2748,8 @@ function animateWaves() {
     const now = (replayActive && replayClock != null) ? currentReplayClock() : Date.now() / 1000;
     let renderer = null;
     for (const [key, entry] of waveMap) {
-        // Data source filter — same 'tw:' prefix convention as epicenter marker
-        // keys. Circles are removed (not just skipped) when hidden so a filter
-        // switch takes effect immediately rather than only on next redraw, and
-        // nulled so they're cleanly recreated if the filter switches back.
+        // Remove hidden-country circles and clear their handles so switching back
+        // recreates them at the current wave radius.
         if ((key.startsWith('tw:') ? !showTaiwan() : !showJapan())) {
             if (entry.pCircle) { map.removeLayer(entry.pCircle); entry.pCircle = null; }
             if (entry.sCircle) { map.removeLayer(entry.sCircle); entry.sCircle = null; }
@@ -2886,15 +2787,8 @@ function animateWaves() {
         }
     }
     if (renderer && (map._animatingZoom || mapIsMoving)) {
-        // The SVG/Canvas vector renderer only rebases its cached center/zoom
-        // (and the CSS transform it derives from them) on 'moveend'. During a
-        // flyTo — or a chain of them, re-triggered by fast-arriving reports
-        // before the previous one ever reaches 'moveend' — that baseline goes
-        // stale, so circles projected against the live map view above get
-        // double-shifted by the renderer's leftover transform and render far
-        // from the epicentre. Force the same resync 'viewreset' would do, every
-        // frame, so the waves stay correctly placed throughout instead of
-        // freezing (or only catching up once movement finally settles).
+        // Resync Leaflet's vector renderer each frame during flyTo; otherwise its
+        // cached transform double-shifts waves until moveend.
         renderer._update();
         renderer._updateTransform(renderer._center, renderer._zoom);
         for (const id in renderer._layers) {
@@ -2904,7 +2798,7 @@ function animateWaves() {
     waveAnimFrame = requestAnimationFrame(animateWaves);
 }
 
-// ── Epicentre markers ─────────────────────────────────────────────────
+// Epicentre markers
 const EPICENTRE_HTML       = '<div style="font-size:24px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:#fff;text-shadow:0 0 6px #000,0 0 2px #000;line-height:1">✕</div>';
 const EPICENTRE_HTML_FLASH = '<div class="eew-epicentre-flash" style="font-size:24px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:#fff;text-shadow:0 0 6px #000,0 0 2px #000;line-height:1">✕</div>';
 const EPICENTRE_ICON       = ()      => L.divIcon({ html: EPICENTRE_HTML,       className: '', iconSize: [26, 26], iconAnchor: [13, 13] });
@@ -2938,11 +2832,8 @@ function placeMarker(key, lat, lon, isPlum, isEew) {
     applyEpicenterVisibility(key);
 }
 
-// Country-scoped marker keys: '__tw_past__' (Taiwan/CWA post-event) and any
-// 'tw:'-prefixed key (Taiwan live EEW, see placeAllTwEewEpicenters) — every
-// other key is JMA's. Called after every placeMarker so a marker placed
-// while its country is filtered out doesn't flash visible even briefly, and
-// from reapplyDataSourceFilter() to update markers already on the map.
+// Taiwan keys are __tw_past__ and tw:*; other keys belong to Japan.
+// Apply visibility after placement too, preventing hidden markers from flashing.
 function isTwEpicenterKey(key) {
     return key === '__tw_past__' || key.startsWith('tw:');
 }
@@ -2981,11 +2872,11 @@ function placeAllEpicenters() {
     }
 }
 
-// ── Tsunami card ──────────────────────────────────────────────────────
+// Tsunami card
 let activeTsunamiData = null;
 let activeTsunamiObs  = null;
 
-// ── Offshore tsunami observation station regions ──────────────────────
+// Offshore tsunami observation station regions
 // JMA's offshore observation telegrams give a station name/code but no
 // coordinates, so locations come from eng_codes.offshore_station_coords —
 // some surveyed (GPS wave-gauge buoy positions), others geocoded estimates.
@@ -3038,13 +2929,9 @@ function tsunamiLevelColor(level) {
 function tsunamiLevelTextColor(level) {
     return (level === 'Advisory' || level === 'Slight sea level change') ? '#111' : '#fff';
 }
-// JMA tsunami kind codes (警報等情報要素／津波警報・注意報・予報). Must stay in sync
-// with TSUNAMI_KIND_LEVEL / TSUNAMI_LIFTED_KINDS in private/main.py.
-//   52 大津波警報 and 53 大津波警報：発表 are both the major tier — 53 is the code
-//   used the moment an area enters a major warning, so it must never fall through
-//   to the "Forecast" default.
-//   50 警報解除 / 60 津波注意報解除 / 00 津波なし mean nothing is in force. The backend
-//   drops those areas, but replayed history predates that, so guard here too.
+// Keep kind codes in sync with TSUNAMI_KIND_LEVEL / TSUNAMI_LIFTED_KINDS
+// in private/main.py. Both 52 and 53 mean major warning.
+// Filter lifted codes (50/60/00) here too for older replay records.
 const TSUNAMI_LIFTED_KINDS = new Set(['50', '60', '00']);
 const TSUNAMI_KIND_TIER = { '53': 'major', '52': 'major', '51': 'warning', '62': 'advisory' };
 function kindTier(code) {
@@ -3132,8 +3019,7 @@ function renderTsunamiCard() {
             const pad = n => String(n).padStart(2, '0');
             return `${pad(dt.getUTCDate())}日${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}`;
         }
-        // Forecast region status before a numeric/qualitative max height is known:
-        // either an estimated arrival time or a "presumed arriving" / "confirmed" status
+        // Until height is known, show the estimated arrival time or arrival status.
         function fmtArrivalStatus(cond, arrivalTs) {
             if (cond === '津波到達中と推測') return `<span class="en">Tsunami presumed arriving</span><span class="ja">津波到達中と推測</span><span class="zh">推測海嘯已抵達</span>`;
             if (cond === '第１波の到達を確認') return `<span class="en">First wave confirmed</span><span class="ja">第１波の到達を確認</span><span class="zh">已確認第一波抵達</span>`;
@@ -3156,7 +3042,8 @@ function renderTsunamiCard() {
                 fCond: (d.conditions || [])[i] || '',
                 arrival: (d.arrival_times || [])[i] || null,
                 regionCode: (d.region_codes || [])[i] || '',
-            })).filter(r => !TSUNAMI_LIFTED_KINDS.has(r.code)); // stood-down coasts (replayed history)
+            // stood-down coasts (replayed history)
+            })).filter(r => !TSUNAMI_LIFTED_KINDS.has(r.code));
             rows.sort((a, b) => heightSortKey(b.h, b.hCond, b.code) - heightSortKey(a.h, a.hCond, a.code));
             html += `<div class="tsun-section-label"><span class="en">Forecast Regions</span><span class="ja">予報・警報地域</span><span class="zh">預報・警報地區</span></div><div class="tsun-list">`;
             rows.forEach(r => {
@@ -3165,10 +3052,7 @@ function renderTsunamiCard() {
                 // arrival status (estimated arrival time, "presumed arriving", etc.)
                 const heightCell = (r.h <= 0 && !r.hCond) ? fmtArrivalStatus(r.fCond, r.arrival) : fmtHeight(r.h, r.hCond, r.over);
                 const clickable = tsunamiRegionCentroids[String(r.regionCode)] ? ' tsun-row-clickable' : '';
-                // r.en/r.ja are JMA region names with no zh translation table (would
-                // need one covering every JMA tsunami forecast area code, akin to
-                // eng_codes.py but for Chinese - not built, out of scope for now) -
-                // zh mode falls back to the English name rather than guessing one.
+                // No Chinese region table exists; use the English fallback.
                 html += `<div class="tsun-row${clickable}" data-tsun-code="${r.regionCode}"><span class="tsun-row-name"><span class="en">${r.en}</span><span class="ja">${r.ja}</span><span class="zh">${r.ja}</span></span><span class="tsun-row-height">${heightCell}</span><span class="tsun-row-kind" style="background:${kc};color:${ktc}"><span class="en">${kindLabelEn(r.code)}</span><span class="ja">${kindLabelJa(r.code)}</span><span class="zh">${kindLabelZh(r.code)}</span></span></div>`;
             });
             html += '</div>';
@@ -3206,10 +3090,7 @@ function renderTsunamiCard() {
         rows.forEach(r => {
             const estBadge = r.estimated
                 ? '<span class="tsun-row-est-badge" title="Estimated location — exact station position unknown / 推定位置 — 観測点の正確な位置は不明 / 推估位置－確切觀測站位置不明">~</span>' : '';
-            // nameEn already falls back to the Japanese name when no English one
-            // exists (see the .map above) - zh does the same, following that
-            // established fallback chain rather than a separate zh translation
-            // table for station names (none exists, see the tsun-row-name note above).
+            // Chinese uses the English name, falling back to Japanese when unavailable.
             html += `<div class="tsun-row"><span class="tsun-row-name"><span class="en">${r.nameEn}${estBadge}</span><span class="ja">${r.nameJa}${estBadge}</span><span class="zh">${r.nameJa}${estBadge}</span></span><span class="tsun-row-height" style="color:#81c995">${fmtHeight(r.h, r.hCond, r.over)}</span></div>`;
         });
         html += '</div>';
@@ -3265,7 +3146,7 @@ function positionMapKey() {
     key.style.maxHeight = Math.max(40, key.getBoundingClientRect().bottom - bottom - 8) + 'px';
 }
 
-// ── EEW panel ─────────────────────────────────────────────────────────
+// EEW panel
 function buildEewCard(data) {
     const isPlum     = !!data.is_plum;
     const isFlash    = !isPlum && !!data.is_flash;
@@ -3280,7 +3161,7 @@ function buildEewCard(data) {
     const mag        = isPlum ? '–' : (data.magnitude != null ? data.magnitude : '–');
     const depth      = isPlum ? '–' : (data.depth != null ? data.depth : '–');
     const quakeTime  = (data.origin_time ?? data.quake_time) ? formatJst(data.origin_time ?? data.quake_time) : '–';
-    // PLUM/flash reports carry no computed forecast, so any LgInt in them is meaningless.
+    // Hide LgInt for PLUM/flash reports, which lack a computed forecast.
     const lpgm       = (isPlum || isFlash) ? null : lpgmClass(data.max_lpgm);
     const finalEn    = data.last_report ? '  [Final]' : '';
     const finalJa    = data.last_report ? '  [最終]' : '';
@@ -3311,9 +3192,7 @@ function buildEewCard(data) {
     return div;
 }
 
-// Taiwan/ExpTech intensity index (0-9) → the same '0'..'7'/'5-'/'5+' string
-// labels JMA's shindo scale uses, per ExpTech's own Intensity[] table
-// (confirmed from their live production trem.js) — 0-4 plain, 5=5-,6=5+,7=6-,8=6+,9=7.
+// ExpTech's 0–9 index maps to JMA classes: 0–4, 5−, 5+, 6−, 6+, 7.
 const TW_MAX_INT_LABELS = ['0','1','2','3','4','5-','5+','6-','6+','7'];
 function twMaxIntLabel(n) {
     return (n != null && TW_MAX_INT_LABELS[n] != null) ? TW_MAX_INT_LABELS[n] : null;
@@ -3345,9 +3224,7 @@ function buildTwEewCard(data) {
     return div;
 }
 
-// Mirrors placeAllEpicenters() for Taiwan EEWs — kept as its own function
-// (rather than merged into activeEews' iteration) since activeTwEews' data
-// shape (eq.lat/eq.lon nested, not flat) differs from JMA's.
+// Taiwan EEW coordinates are nested under eq, unlike the flat JMA payload.
 function placeAllTwEewEpicenters() {
     for (const [key, data] of activeTwEews) {
         const eq = data.eq || {};
@@ -3376,11 +3253,8 @@ function renderEewPanels() {
     container.innerHTML = '';
     const jpEews   = showJapan()  ? activeEews   : new Map();
     const twEews   = showTaiwan() ? activeTwEews : new Map();
-    // CWA post-event reports (activeTwQuakeData) never render here - unlike
-    // JMA EEW/live Taiwan EEW, they're never "in progress"/live, only ever
-    // a finalized historical report, so they don't belong in this live-status
-    // panel. They still get an epicenter marker/popup, region coloring, and
-    // their own sidebar entry - see the tw_earthquake displayData handler.
+    // CWA reports use markers, region colours and sidebar entries; this panel
+    // is reserved for live EEW.
     if (jpEews.size === 0 && twEews.size === 0) {
         document.getElementById('no-eew-msg').style.display = '';
         setLanguage(currentLanguage);
@@ -3427,15 +3301,13 @@ function formatJst(unixSec) {
            `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} JST`;
 }
 
-// ── Language toggle ───────────────────────────────────────────────────
+// Language toggle
 let currentLanguage = 'en';
 let lastQuakeData = [];
 let lastTwHistoryData = []; // Taiwan/CWA equivalent of lastQuakeData, fed by tw_history
 const wsQuakeBuffer = new Map(); // quake_time (unix seconds) → ws entry
 
-// Small 3-way translation helper for strings built in JS (as opposed to the
-// static <span class="en">/.ja/.zh markup pattern used directly in HTML/
-// generated HTML, which the CSS lang-attribute rules handle on their own).
+// Translate JS strings; CSS language rules handle the static language spans.
 function t(en, ja, zh) {
     return currentLanguage === 'ja' ? ja : currentLanguage === 'zh' ? zh : en;
 }
@@ -3444,14 +3316,16 @@ function setLanguage(lang) {
     currentLanguage = lang;
     document.documentElement.lang = lang;
     const boreholeRow = document.getElementById('sp-borehole-row');
-    if (boreholeRow) boreholeRow.title = t('Underground station', '地中観測点', '井下觀測站');
+    if (boreholeRow) boreholeRow.title = t(
+        'Underground station. Colours are for illustration only and should not be compared directly with surface stations, as underground observation conditions differ.',
+        '地中観測点。色はあくまで参考表示です。地中と地表では観測条件が異なるため、地表の観測点の色と直接比較しないでください。',
+        '井下觀測站。顏色僅供示意。由於地下與地表的觀測條件不同，請勿直接與地表觀測站的顏色比較。'
+    );
     const mapKey = document.getElementById('map-key');
     if (mapKey) mapKey.title = t('Map key', '凡例', '圖例');
     renderSidebar(lastQuakeData);
-    // Follow the UI language for notifications unless the user has set an explicit
-    // override. Push notification content only exists in en/ja (see main.py's
-    // NTFY_TOPIC_*_EN/_JA and OneSignal 'warnings'/'warnings_ja' categories) - a
-    // zh UI has no zh notification category to switch to, so it falls back to en.
+    // Follow the UI language unless notifications have an explicit override.
+    // Chinese falls back to English because notification content is EN/JA only.
     if (!localStorage.getItem(NOTIF_LANG_KEY)) {
         const notifLang = lang === 'zh' ? 'en' : lang;
         updateNotifLanguageUI(notifLang);
@@ -3468,7 +3342,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateSidebarFilterUI();
     reapplyDataSourceFilter();
     loadTimelineMarkersAndGaps();
-    // Fallback only — new quakes/tsunamis trigger an immediate refresh themselves (see displayData).
+    // Periodic fallback; displayData refreshes immediately for new events.
     if (!_timelineRefreshTimer) _timelineRefreshTimer = setInterval(loadTimelineMarkersAndGaps, 300000);
     const panelResize = new ResizeObserver(positionObsPanel);
     for (const id of ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
@@ -3477,7 +3351,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('quake-sidebar').addEventListener('transitionend', scheduleRegionMapLabels);
 });
 
-// ── WebSocket ─────────────────────────────────────────────────────────
+// WebSocket
 let lastMessageTime = Date.now();
 let connectionAttempts = 0;
 let reconnectTimer = null;
@@ -3532,6 +3406,7 @@ function createWebSocket() {
         lastMessageTime = Date.now();
         let data;
         try { data = JSON.parse(e.data); } catch { return; }
+        // Update live mirrors before replay diverts messages away from displayData.
         if (data.type === 'nied_stations') {
             liveStationCache.clear();
             data.stations.forEach(s => liveStationCache.set(s.code, s));
@@ -3573,7 +3448,7 @@ function createWebSocket() {
 
 createWebSocket();
 
-// ── Earthquake history sidebar ────────────────────────────────────────
+// Earthquake history sidebar
 let quakeSidebarCollapsed = window.innerWidth <= 600;
 if (quakeSidebarCollapsed) {
     document.getElementById('quake-sidebar').classList.add('collapsed');
@@ -3606,9 +3481,7 @@ function parseQuakeDepth(cod) {
     return m ? Math.round(Math.abs(parseInt(m[1])) / 1000) : null;
 }
 
-// Builds a comparable fingerprint of the fields that matter to the user (time/location/
-// intensity/magnitude/depth) from either source's raw fields, normalizing away the minor
-// formatting differences between the WQ (live telegram) and JMA history feeds.
+// Normalise key report fields so live and JMA history updates can be compared.
 function quakeSoundFingerprint({ at, quakeTimeSec, intensity, mag, depth, loc }) {
     const tsMin = at != null ? Math.round(new Date(at).getTime() / 60000)
                 : (quakeTimeSec != null ? Math.round(quakeTimeSec / 60) : null);
@@ -3617,9 +3490,8 @@ function quakeSoundFingerprint({ at, quakeTimeSec, intensity, mag, depth, loc })
     return [tsMin, intensity || null, magNum, depthNum, loc || null].join('|');
 }
 
-// Resolves a canonical key for quakeInfoSoundState: an exact id match if we have one,
-// otherwise the existing entry whose time is within 90s (JMA history times are minute-
-// truncated, so this mirrors the drift tolerance used elsewhere for source matching).
+// Prefer an exact quake ID, then a time match within 90s to account for
+// minute-truncated JMA history timestamps.
 function resolveQuakeSoundKey(candidateKey, tsSeconds) {
     if (candidateKey != null && quakeInfoSoundState.has(candidateKey)) return candidateKey;
     if (tsSeconds != null) {
@@ -3678,9 +3550,7 @@ function jmaDetailUrl(ctt, useJp) {
     return `https://www.data.jma.go.jp/multi/quake/quake_detail.html?eventID=${ctt}&lang=${useJp ? 'jp' : 'en'}`;
 }
 
-// Normalizes a JMA history entry or a WS buffer entry into a common shape so
-// per-field provenance (which source contributed the currently-displayed value)
-// can be tracked when several reports describe the same earthquake.
+// Normalise both sources while retaining field provenance for merged reports.
 function normalizeJmaCandidate(q, useJp) {
     return {
         kind: 'jma', ctt: q.ctt,
@@ -3688,10 +3558,7 @@ function normalizeJmaCandidate(q, useJp) {
         depth: parseQuakeDepth(q.cod),
         mag: q.mag ?? null,
         is_volcanic: !!q.is_volcanic,
-        // No Chinese translation table exists for JMA's ~200 region/prefecture
-        // codes (would mirror eng_codes.py) - zh mode uses the native Japanese
-        // kanji name instead of English, since it's the actual place name
-        // (mutually legible to Chinese readers) rather than a guess at one.
+        // Use native Japanese place names in Chinese; no Chinese code table exists.
         loc: (useJp ? q.anm : (q.en_anm || '').replace(/ Prefecture/gi, '').replace(/ Pref\./gi, '')) || q.anm || null,
         at: q.at,
         lat: null, lon: null,
@@ -3737,9 +3604,8 @@ function renderSidebar(quakes) {
     const sidebarFilter = effectiveSidebarFilter();
     const renderItems = []; // { ts, el } — sorted newest-first before being appended
 
-    // Cluster each WS (live telegram) entry with every JMA history entry that
-    // describes the same earthquake (matched by event_id or within 90 s of origin time).
-    // Unmatched JMA entries form their own single-candidate cluster.
+    // Cluster live and JMA reports by event_id or origin time within 90s.
+    // Keep unmatched JMA entries as single-candidate clusters.
     const usedJmaIdx = new Set();
     const clusters = [];
     if (sidebarFilter !== 'tw') {
@@ -3760,8 +3626,8 @@ function renderSidebar(quakes) {
     });
 
     clusters.forEach(cluster => {
-        // JMA candidates take priority over WS, and among themselves the most recently
-        // issued report (highest ctt, a YYYYMMDDHHMMSS string) wins ties for a given field.
+        // Prefer JMA over WS; for each field, break ties by the latest report ctt
+        // (a YYYYMMDDHHMMSS string).
         const jmaCandidates = cluster.jmaIdxs
             .map(idx => normalizeJmaCandidate(quakes[idx], currentLanguage !== 'en'))
             .sort((a, b) => String(b.ctt || '').localeCompare(String(a.ctt || '')));
@@ -3774,7 +3640,7 @@ function renderSidebar(quakes) {
         const fLoc        = pickField(priorityList, 'loc');
         const atSource = fLoc.source || fIntensity.source || fMag.source || fDepth.source || priorityList[0] || null;
 
-        // Group contributing fields by the source that supplied them, for the breakdown popover.
+        // Group fields by contributing source for the breakdown popover.
         const sourceGroups = new Map();
         [['intensity', fIntensity], ['depth', fDepth], ['mag', fMag], ['loc', fLoc]].forEach(([key, f]) => {
             if (!f.source) return;
@@ -3852,11 +3718,7 @@ function renderSidebar(quakes) {
             jmaPopoverHtml = `<div class="quake-jma-popover hidden"><div class="quake-jma-popover-title">${sourcesTitle}</div>${popoverItems}</div>`;
         }
 
-        // Backend-confirmed match (JMA hypocenter code 900/901 + haversine/
-        // time match against a CWA report, see _find_matching_tw_report) -
-        // a small secondary note rather than a competing card/marker (that's
-        // suppressed on the map side, see the 'earthquake' displayData
-        // handler), since CWA's report is the primary one for this event.
+        // For backend-confirmed CWA matches, show a note; CWA owns the map marker.
         const matchedTw = cluster.ws && cluster.ws.matched_tw;
         const matchedTwTip = t('Also felt in Taiwan', 'この地震は台湾でも観測されました', '此地震在台灣也有觀測到');
         const matchedTwHtml = matchedTw
@@ -3901,10 +3763,7 @@ function renderSidebar(quakes) {
             a.querySelector('.quake-replay-btn').addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
-                // event_ts is the quake's origin time rounded down to the minute by JMA,
-                // which can be tens of seconds before the marker was actually broadcast.
-                // Jump to just before the broadcast itself (replayMarker.ts) instead, so
-                // playback doesn't have to idle through the rest of that minute first.
+                // Jump before receipt to avoid waiting from a truncated origin time.
                 jumpReplayTo((replayMarker.ts ?? replayMarker.event_ts) - 5).then(() => { openTimelinePanel(); playReplay(); });
                 collapseSidebarOnMobile();
             });
@@ -3939,14 +3798,8 @@ function renderQuakeHistory(quakes) {
     renderSidebar(quakes);
 }
 
-// Taiwan/CWA sidebar entry - much simpler than buildEewCard's JMA equivalent
-// above: CWA publishes each report once (no revision staging to cluster/merge
-// like JMA's VXSE51->52->53 + live-telegram blending), and tw_history entries
-// already carry lat/lon directly, so "view on map" is a plain flyTo rather
-// than the replay/station-reconstruction machinery handleJmaMapBtn needs.
-// Keyed by earthquake_no (not ts) - ts is only origin-time precision (seconds)
-// and isn't guaranteed unique the way a JMA event_id string effectively is,
-// so ts was the wrong identity for this toggle.
+// CWA entries already contain coordinates and need no JMA source merging.
+// Key the map toggle by earthquake_no; origin timestamps may not be unique.
 let twSidebarActiveKey = null;
 
 function handleTwMapBtn(q) {
@@ -3971,11 +3824,7 @@ function handleTwMapBtn(q) {
         placeMarker('tw:pts', q.lat, q.lon);
         map.flyTo([q.lat, q.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
     }
-    // CWA reports carry a full per-station intensity list - show it, hiding
-    // live station dots the same way viewing a JMA past quake already does,
-    // so the map reads as "this report's snapshot" rather than mixing in
-    // whatever's currently live. Same banner JMA's equivalent view shows,
-    // explaining why the live dots disappeared.
+    // Show the CWA report snapshot and hide live dots, matching the JMA view.
     liveStationsHidden = true;
     renderRegionColors();
     document.getElementById('obs-live-hidden').style.display = 'block';
@@ -4057,10 +3906,11 @@ function buildTwHistoryEntry(q) {
 }
 
 
-// ── Audio state ───────────────────────────────────────────────────────
-let jmaHistoryReceived = false; // suppresses a chime for the first (cached) jma_history snapshot on connect
+// Audio state
+// suppresses a chime for the first (cached) jma_history snapshot on connect
+let jmaHistoryReceived = false;
 
-// ── EEW / wave clear ──────────────────────────────────────────────────
+// EEW / wave clear
 function clearEewDisplay(key) {
     if (key !== undefined && activeEews.has(key)) {
         activeEews.delete(key);
@@ -4078,7 +3928,7 @@ function clearEewDisplay(key) {
         }
         activeEews.clear();
     } else {
-        // key defined but already removed from activeEews — clean up any lingering wave only
+        // The EEW was already removed; clean up any remaining wave.
         clearWaveForKey(key);
         return;
     }
@@ -4092,7 +3942,7 @@ function clearEewDisplay(key) {
     redrawStations();
 }
 
-// ── Main message dispatcher ───────────────────────────────────────────
+// Main message dispatcher
 function displayData(data) {
     if (data.type === 'jma_history') {
         const top = data.quakes.length > 0 ? data.quakes[0] : null;
@@ -4223,12 +4073,8 @@ function displayData(data) {
         // Always resync region colours to this past quake's own report (or clear
         // them if it has none) so a prior EEW's shading doesn't linger.
         showReportRegionColors(activePastQuakeAreaIntensities || []);
-        // A backend-confirmed match against a CWA report (hypocenter code
-        // 900/901, see _find_matching_tw_report) means this JMA report and an
-        // active Taiwan report describe the same physical event - CWA's own
-        // marker/flyTo is the primary one for it, so this side doesn't place
-        // a second competing marker. The sidebar entry still gets a "also
-        // reported by CWA" note (see renderSidebar/matched_tw).
+        // Matched JMA/CWA reports share the CWA marker and flyTo target.
+        // Keep the JMA sidebar entry with its matched_tw note.
         if (data.matched_tw) {
             removeEpicenterMark('__past__');
         } else if (data.lat != null && data.lon != null) {
@@ -4240,12 +4086,9 @@ function displayData(data) {
                 map.flyTo([data.lat, data.lon], QUAKE_ZOOM, { animate: true, duration: 1 });
             }
         }
-        // Per-station intensity points only exist once the VXSE53 report (the one
-        // carrying area_intensities) has been processed server-side — fetching on
-        // every past-quake message (including the epicentre-only VXSE52) would, during
-        // replay, pull in already-persisted station data before that report's own
-        // timestamp is reached, showing points/regions too early. Once such a report
-        // has been seen for this quake, later follow-ups keep refreshing the points.
+        // Reveal station points only after VXSE53 arrives; earlier replay messages
+        // must not expose data persisted by a later report. Keep points visible
+        // for subsequent epicenter-only revisions of the same event.
         if (data.quake_time && (activePastQuakeAreaIntensities || pastQuakeStationsShown)) {
             const _ts = data.quake_time, _lat = data.lat, _lon = data.lon;
             (async () => {
@@ -4303,13 +4146,7 @@ function displayData(data) {
         clearOffshoreObsRegions();
         renderTsunamiCard();
     } else if (data.type === 'tw_earthquake') {
-        // Taiwan/CWA post-event report. Never rendered in the live #eew-panel
-        // (see renderEewPanels) - CWA reports are always finalized/historical,
-        // never "in progress" the way EEW is, so they don't belong in a
-        // live-status panel. Only the epicenter marker (own dedicated key, so
-        // a concurrent JMA past-quake marker '__past__' is never overwritten)
-        // + click popup, region coloring, and the sidebar history entry
-        // represent it.
+        // Show the CWA report on the map and in history; keep it out of the EEW panel.
         activeTwQuakeData = data;
         if (data.stations && data.stations.length) {
             updateTwRegionColors(computeTwRegionIntensitiesFromStations(data.stations));
@@ -4328,11 +4165,8 @@ function displayData(data) {
         removeEpicenterMark('__tw_past__');
         resetTwRegionColors();
     } else if (data.type === 'tw_eew') {
-        // Live Taiwan EEW, sourced from ExpTech's eq/eew feed (CWA has no public
-        // live push — see plan notes). Schema fields (author/serial/eq.{time,loc,
-        // lat,lon,mag,depth,max}) confirmed from ExpTech's own live production
-        // code, not guessed — see the eq.lat/eq.lon caveat in buildTwEewCard's
-        // caller: if a payload omits them, the marker/wave just don't render.
+        // ExpTech live EEW uses nested eq fields. Missing coordinates suppress
+        // marker and wave rendering.
         const key = String(data.id ?? data.serial ?? Date.now());
         activeTwEews.set(key, data);
         renderEewPanels();
@@ -4352,16 +4186,12 @@ function displayData(data) {
     }
 }
 
-// ── 48h history replay ─────────────────────────────────────────────────
-// Replay re-feeds historical broadcast messages through displayData() — the
-// same function live data uses — so it doesn't need a parallel render path.
-// While active, the live socket is gated (see createWebSocket's message
-// listener) into replayLiveBuffer instead of reaching displayData().
-const HISTORY_RETENTION_SECONDS = 48 * 3600; // must match backend HISTORY_RETENTION_SECONDS
-// Must match #timeline-range::-webkit-slider-thumb / ::-moz-range-thumb width in style.css.
-// Native range inputs travel within [thumbWidth/2, trackWidth - thumbWidth/2], not edge to
-// edge, so anything we draw on top (ticks, gap markers) needs the same inset or it visibly
-// drifts away from the actual thumb position as you move away from the track's midpoint.
+// 48h history replay
+// Replay uses displayData; buffer live messages until replay exits.
+// must match backend HISTORY_RETENTION_SECONDS
+const HISTORY_RETENTION_SECONDS = 48 * 3600;
+// Match the slider thumb width in style.css. Tick/gap positions need the
+// same half-thumb inset as the native range input.
 const TIMELINE_THUMB_PX = 16;
 
 // Maps a timestamp to a left-offset percentage that matches where the native
@@ -4375,15 +4205,19 @@ function timelineTsToPercent(ts, from, span, trackWidthPx) {
 }
 let replayActive = false;
 let replayPlaying = false;
-let replayLoading = false;    // true while jumpReplayTo is fetching the target position's state
-let replayClock = null;       // virtual unix ts currently displayed
-let replayClockAnchorMs = null; // Date.now() at which replayClock was last set, for sub-second interpolation
-let replayBuffer = [];        // upcoming {ts, data} messages, ts ascending
-let replayBufferUntil = 0;    // we've fetched window data up to this ts
-let replayGen = 0;            // bumped on each jump; stale in-flight fetches discard themselves
-let replayRefilling = false;  // a window fetch is in flight; prevents overlapping refills
-let replayAbort = null;       // AbortController for the current jump's fetches; aborted when a newer jump starts
-let replayLiveBuffer = [];    // live messages received while replay is active
+// true while jumpReplayTo is fetching the target position's state
+let replayLoading = false;
+let replayClock = null; // virtual unix ts currently displayed
+// Date.now() at which replayClock was last set, for sub-second interpolation
+let replayClockAnchorMs = null;
+let replayBuffer = []; // upcoming {ts, data} messages, ts ascending
+let replayBufferUntil = 0; // we've fetched window data up to this ts
+let replayGen = 0; // bumped on each jump; stale in-flight fetches discard themselves
+// a window fetch is in flight; prevents overlapping refills
+let replayRefilling = false;
+// AbortController for the current jump's fetches; aborted when a newer jump starts
+let replayAbort = null;
+let replayLiveBuffer = []; // live messages received while replay is active
 let replayTickTimer = null;
 let lockTimelineOnReplay = false;
 let hideTimelineFeature = false;
@@ -4466,7 +4300,7 @@ async function jumpReplayTo(ts) {
     ts = Math.max(now - HISTORY_RETENTION_SECONDS, Math.min(ts, now));
     pauseReplay();
     const gen = ++replayGen;
-    if (replayAbort) replayAbort.abort(); // cancel a previous jump's in-flight fetches so they don't hog connections
+    if (replayAbort) replayAbort.abort(); // Cancel fetches from the previous seek.
     replayAbort = new AbortController();
     const signal = replayAbort.signal;
     replayRefilling = false; // abandon any in-flight fetch from a previous jump
@@ -4485,15 +4319,11 @@ async function jumpReplayTo(ts) {
     replayBuffer = [];
     replayBufferUntil = ts;
     resetToNeutralState();
-    // The replay log only stores stations whose readings changed, so seed every
-    // known station (from the live cache) as a baseline "no data yet" dot —
-    // otherwise the map looks empty until a station happens to report a change.
+    // Seed known stations as no-data dots; diffs only include changed readings.
     updateStations([...liveStationCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
     updateSnetStations([...liveSnetCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
     updateTwStations([...liveTwStationCache.values()].map(s => ({ code: s.code, lat: s.lat, lon: s.lon, int: '0', raw: -3 })));
-    // Fetch the reconstructed state and a small initial playback buffer in
-    // parallel. Only block on a 90s buffer so playback can start almost
-    // immediately; the rest is prefetched in the background below.
+    // Fetch state and the initial 90s buffer in parallel, then prefetch the rest.
     const statePromise = fetchHistoryState(ts, signal);
     const refillPromise = refillReplayBuffer(90);
     const state = await statePromise;
@@ -4583,7 +4413,7 @@ function enterReplay() {
     jumpReplayTo(Date.now() / 1000 - 600);
 }
 
-// ── Timeline UI ──────────────────────────────────────────────────────
+// Timeline UI
 let timelinePanelOpen = false;
 let timelineMarkers = [];
 let timelineGaps = [];
@@ -4654,10 +4484,8 @@ async function loadTimelineMarkersAndGaps() {
     renderSidebar(lastQuakeData);
 }
 
-// Gap bars and tick labels are rebuilt only here — on panel open, resize, and
-// the periodic marker/gap refresh — not on every 1s replay tick. Their
-// positions are anchored to "now", but the drift between refreshes (≤5 min out
-// of a 48 h span) is well under a pixel of track width.
+// Rebuild ticks/gaps on open, resize and periodic refresh, not every second.
+// Drift between refreshes is under a pixel across the 48h track.
 function renderTimelineOverlays() {
     renderTimelineMarkers();
     renderTimelineTicks();
@@ -4691,10 +4519,7 @@ function findReplayMarkerForTs(ts) {
     return timelineMarkers.find(m => m.kind === 'quake' && Math.abs((m.event_ts ?? m.ts) - ts) < 90) || null;
 }
 
-// Candidate spacings (hours) for the tick labels below the slider, smallest
-// first. renderTimelineTicks picks the smallest one whose labels won't
-// overlap at the panel's current width, so desktop (wider panel) typically
-// gets 3h ticks while a narrow phone screen falls back to 6h/12h/24h.
+// Choose the smallest tick spacing that avoids overlap at the current width.
 const TIMELINE_TICK_STEP_HOURS = [3, 6, 12, 24];
 
 function jumpReplayToTick(ts) {
@@ -4717,8 +4542,7 @@ function renderTimelineTicks() {
     }
     const stepSeconds = stepHours * 3600;
     const JST_OFFSET = 9 * 3600;
-    // Align ticks to JST clock boundaries (e.g. 00:00/03:00/06:00) rather than
-    // arbitrary offsets from "now", so they read like a real clock.
+    // Align ticks to JST clock boundaries.
     const firstJst = Math.ceil((from + JST_OFFSET) / stepSeconds) * stepSeconds;
     layer.innerHTML = '';
     for (let tsJst = firstJst; tsJst - JST_OFFSET <= now; tsJst += stepSeconds) {
@@ -4745,9 +4569,7 @@ window.addEventListener('resize', () => { if (timelinePanelOpen) renderTimelineO
 const TIMELINE_PLAY_ICON_D = 'M8 5v14l11-7z';
 const TIMELINE_PAUSE_ICON_D = 'M7 5h4v14H7zM13 5h4v14h-4z';
 
-// state: 'play' | 'pause' | 'loading'. 'loading' covers the gap between jumping to a new
-// timeline position and its data actually arriving — without it, that window looked
-// identical to a deliberate pause, even though clicking play would do nothing yet.
+// States: play, pause, loading. Loading lasts until a timeline seek resolves.
 function setTimelinePlayPauseIcon(state) {
     const btn = document.getElementById('timeline-playpause');
     const playPauseSvg = document.getElementById('timeline-playpause-svg');

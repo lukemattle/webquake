@@ -16,7 +16,7 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     font-size: 2.4em; font-weight: 700; text-align: center;
     margin: 6px 0; line-height: 1;
 }
-/* Long-period ground motion class — only rendered when the telegram reports class 1+ */
+/* Show long-period ground motion only for classes 1–4. */
 .eew-lpgm-box {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     border-radius: 4px; padding: 4px 8px;
@@ -144,11 +144,7 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
     text-decoration: none; color: inherit; cursor: pointer;
 }
 .quake-entry:hover { background: rgba(255,255,255,0.05); }
-/* Taiwan/CWA entries get a teal accent stripe (matching the ExpTech/TREM-Net
-   badge color used elsewhere) so they're distinguishable at a glance in
-   "Both" mode without needing extra width in an already-compact card. Rule
-   order matters here: .quake-entry-active must come after so its amber
-   accent wins when a TW entry is also the active one. */
+/* CWA cards use teal; keep the active rule later so amber takes priority. */
 .quake-entry-tw { box-shadow: inset 3px 0 0 rgba(45,212,191,0.6); }
 .quake-entry-active { background: rgba(255,200,50,0.08); box-shadow: inset 3px 0 0 #f5a623; }
 .quake-entry:first-child .quake-info { padding-top: 10px; }
@@ -183,10 +179,7 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 .quake-source-ws      { color: #4a9eff; }
 .quake-source-jma     { color: #666; }
 .quake-source-wqjma   { color: #a78bfa; }
-/* Two distinct badges, not one "Taiwan" tag — ExpTech's live station feed is
-   its own community sensor network (TREM-Net), not an official CWA source;
-   CWA's own earthquake reports are official. Mislabeling ExpTech data as CWA
-   would misattribute a community network as a government one. */
+/* Distinguish the community ExpTech feed from official CWA reports. */
 .quake-source-exptech { color: #2dd4bf; }
 .quake-source-cwa     { color: #f59e0b; }
 .quake-map-btn {
@@ -481,9 +474,7 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 22px;
     margin: 0; cursor: pointer;
 }
-/* Explicit thumb size so JS can correct tick/gap positions for the native
-   range input's edge inset (its thumb travels within [thumbWidth/2, track
-   width - thumbWidth/2], not edge-to-edge) — see TIMELINE_THUMB_PX in app.js. */
+/* Keep thumb width in sync with TIMELINE_THUMB_PX for tick/gap alignment. */
 #timeline-range::-webkit-slider-thumb { width: 16px; height: 16px; }
 #timeline-range::-moz-range-thumb { width: 16px; height: 16px; }
 #timeline-gap-layer {
