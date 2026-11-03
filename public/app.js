@@ -1,4 +1,4 @@
-const VERSION = 'v1.0.1';
+const VERSION = 'v1.1';
 const FRONTEND_ASSET_BASE = new URL('.', document.currentScript.src);
 
 // ── Data source filter (Both / Japan only / Taiwan only) ───────────────
