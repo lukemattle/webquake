@@ -2459,7 +2459,11 @@ function showStationPopup(st, px, py, source) {
     if (_snetAgeInterval) { clearInterval(_snetAgeInterval); _snetAgeInterval = null; }
     if (isSnet && snetDataTime) {
         const prefix = t('Seafloor · ', '海底観測 · ', '海底觀測 · ');
-        const tip    = t('Seafloor stations update every ~1 min', '海底観測点は約1分ごとに更新されます', '海底觀測站約每1分鐘更新一次');
+        const tip = t(
+            'Seafloor stations update every ~1 min. Colours are for illustration only and should not be compared directly with land-based stations, as seafloor observation conditions differ.',
+            '海底観測点は約1分ごとに更新されます。色はあくまで参考表示です。海底と陸上では観測条件が異なるため、陸上の観測点の色と直接比較しないでください。',
+            '海底觀測站約每1分鐘更新一次。顏色僅供示意。由於海底與陸地的觀測條件不同，請勿直接與陸地觀測站的顏色比較。'
+        );
         const updateAge = () => {
             ageRow.innerHTML = `<span title="${tip}" style="text-decoration:underline dotted;text-underline-offset:2px;cursor:help">${prefix + _formatAge(snetDataTime)}</span>`;
         };
@@ -3312,7 +3316,11 @@ function setLanguage(lang) {
     currentLanguage = lang;
     document.documentElement.lang = lang;
     const boreholeRow = document.getElementById('sp-borehole-row');
-    if (boreholeRow) boreholeRow.title = t('Underground station', '地中観測点', '井下觀測站');
+    if (boreholeRow) boreholeRow.title = t(
+        'Underground station. Colours are for illustration only and should not be compared directly with surface stations, as underground observation conditions differ.',
+        '地中観測点。色はあくまで参考表示です。地中と地表では観測条件が異なるため、地表の観測点の色と直接比較しないでください。',
+        '井下觀測站。顏色僅供示意。由於地下與地表的觀測條件不同，請勿直接與地表觀測站的顏色比較。'
+    );
     const mapKey = document.getElementById('map-key');
     if (mapKey) mapKey.title = t('Map key', '凡例', '圖例');
     renderSidebar(lastQuakeData);
