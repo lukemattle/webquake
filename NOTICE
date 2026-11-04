@@ -16,7 +16,6 @@ addition to the AGPL.
 --------------------------------------------------------------------------------
 
 private/jma-stations.json
-private/snet_stations.json
 public/japan-regions.geojson
 public/tsunami-regions.geojson
 
@@ -24,9 +23,7 @@ public/tsunami-regions.geojson
     Japan Meteorological Agency (気象庁 / JMA).
     https://www.jma.go.jp/
 
-    JMA content is generally published under the Government of Japan Standard
-    Terms of Use (Version 2.0), which permits reproduction and redistribution,
-    including for commercial purposes and in modified form, with attribution.
+    JMA content is generally published under the Public Data License v1.0, which permits reproduction and redistribution, including for commercial purposes and in modified form, with attribution.
     Those terms are broadly compatible with CC BY 4.0.
     https://www.jma.go.jp/jma/kishou/info/coment.html
 
@@ -38,14 +35,30 @@ private/nied_stations.json
     Monitor real-time seismic intensity service.
     https://www.bosai.go.jp/  |  http://www.kmoni.bosai.go.jp/
 
+private/snet_stations.json
+S-net real-time observation data
+
+    S-net is operated by the National Research Institute for Earth Science
+    and Disaster Resilience (NIED). WebQuake uses S-net station metadata and
+    processes seismic intensity tiles fetched from the Marine Situation
+    Indication System (海洋状況表示システム / MSIL), operated by the Japan
+    Coast Guard. Tile pixel positions and decoded intensity values are
+    processed by WebQuake, not official products of MSIL or NIED.
+    https://www.seafloor.bosai.go.jp/S-net/
+    https://www.msil.go.jp/
+
+    MSIL is free to use subject to its terms, including source and provider
+    attribution, identification of processing, and any applicable conditions
+    of the data provider. Its terms apply the Public Data License v1.0 except
+    where separate content-specific terms apply.
+    https://www.msil.go.jp/data/terms-of-use-ja.pdf
+
 Real-time observation data
 
     Fetched at runtime from the Kyoshin Monitor service operated by NIED, and
     from JMA telegrams delivered via the DMDATA / DM-DSS service
-    (https://dmdata.jp/), which requires a paid subscription. No such data is
-    redistributed in this repository. Users of a WebQuake deployment obtain
-    this data under their own subscription and under the terms of the
-    respective operators.
+    (https://dmdata.jp/). DMDATA access requires the deployment operator's own
+    paid subscription and is subject to terms. Other feeds remain subject to their respective providers' access and use terms. No live observation data is bundled in this repository.
 
 Kyoshin Monitor colour-scale conversion
 
@@ -94,5 +107,5 @@ licences:
 
 Python dependencies are installed from PyPI (see private/requirements.txt) and
 are all under permissive licences: BSD-3-Clause (Flask, httpx, numpy), MIT
-(Flask-Sock, Flask-Compress, simple-websocket, brotli), HPND (Pillow), and
+(Flask-Sock, Flask-Compress, simple-websocket, brotli, gevent), HPND (Pillow), and
 Apache-2.0 (requests, websocket-client).
