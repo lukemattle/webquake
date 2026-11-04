@@ -28,7 +28,7 @@ class ConfigurationTests(unittest.TestCase):
                 'import websocket_hub as hub; '
                 f'print(json.dumps({{name: getattr(hub, name) for name in {list(DEFAULTS)!r}}}))')
         return subprocess.run([sys.executable, '-c', code], env=environment,
-                              cwd=Path(__file__).resolve().parent,
+                              cwd=Path(__file__).resolve().parent.parent,
                               capture_output=True, text=True, timeout=5)
 
     def test_defaults(self):

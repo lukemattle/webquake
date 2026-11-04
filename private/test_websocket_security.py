@@ -1,6 +1,6 @@
 """Isolated WebSocket checks: no upstream credentials, polling or notifications.
 
-Run: python -m unittest test_websocket_security -v
+Run from the repository root: python -m unittest discover -s private -v
 """
 
 import ast
@@ -19,7 +19,7 @@ from simple_websocket import Server
 from wsproto import WSConnection, ConnectionType
 from wsproto.events import Request, TextMessage, CloseConnection
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'private'))
 import websocket_hub as hub_module
 
