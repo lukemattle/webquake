@@ -3,6 +3,8 @@ A web application which uses live earthquake reports and live tsunami informatio
 
 You can access WebQuake at https://webqua.ke.
 
+For issue reports and pull requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ![Example of WebQuake's frontend in English.](example_en.png "Example of WebQuake's frontend in English.")
 > Japanese is also available by navigating to `/ja` or clicking JA
 > This screenshot was taken before WebQuake was updated to comply with NIED's updated ToS.<br>WebQuake no longer shows individual numerical seismic intensity values (1, 2... 7) for live stations - rather showing the max. intensity observed in a region by live stations. The screenshot will be updated the next time a major earthquake occurs.<br>TL:DR - the number under Max. Intensity and individual stations no longer exist. The colour is still there.
