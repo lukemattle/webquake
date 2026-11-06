@@ -104,7 +104,7 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 .region-map-label .region-intensity { min-width: 22px; padding: 0 3px; font-size: 11px; }
 
 #bottom-bar {
-    position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 1003;
     background: rgba(0,0,0,0.75); padding: 6px 12px;
     display: flex; align-items: center; gap: 10px;
     color: #fff; font-size: 0.82em; position: absolute;
@@ -260,8 +260,7 @@ a.quake-jma-popover-item { color: #8fb8ff; }
     background: #555; color: #fff; font-size: 0.9em;
 }
 #jst-time { color: #ddd; }
-#discord-btn { margin-left: auto; }
-#x-btn, #github-btn { margin-left: 4px; }
+#links-control { margin-left: auto; }
 #bottom-title { position: absolute; left: 50%; transform: translateX(-50%); font-size: 0.95em; color: #aaa; pointer-events: none; }
 #bottom-version { color: #666; }
 .bar-btn {
@@ -273,6 +272,43 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 .bar-btn:hover { background: rgba(255,255,255,0.22); }
 .bar-btn:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
 .bar-btn-off { opacity: 0.4; }
+
+.bar-menu { position: relative; flex-shrink: 0; }
+.bar-menu-popup {
+    position: absolute; bottom: calc(100% + 12px); left: 0;
+    min-width: 180px; max-width: calc(100vw - 20px); padding: 6px;
+    background: #141414; border: 1px solid #444; border-radius: 6px;
+    box-shadow: 0 2px 16px #0009;
+}
+.bar-menu-popup[hidden] { display: none; }
+#links-menu { left: auto; right: 0; }
+.bar-menu-popup button, .bar-menu-popup a {
+    display: flex; align-items: center; width: 100%; min-height: 44px;
+    padding: 8px 12px; border: 0; border-radius: 3px;
+    background: transparent; color: #fff; font: inherit;
+    text-align: left; text-decoration: none; cursor: pointer;
+}
+.bar-menu-popup button:hover, .bar-menu-popup a:hover,
+.bar-menu-popup [aria-pressed="true"] { background: #333; }
+.bar-menu-popup :focus-visible { outline: 2px solid #4a9eff; }
+
+@media (max-width: 650px) {
+    #bottom-bar {
+        min-height: calc(60px + env(safe-area-inset-bottom, 0px));
+        padding: 8px max(8px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+        gap: 4px; font-size: 0.82em;
+    }
+    #bottom-bar > .bar-btn, #bottom-bar .bar-menu > .bar-btn {
+        height: 44px; min-width: 44px; padding: 0 8px; font-size: 0.9em;
+        flex-shrink: 0;
+    }
+    #connection-status { width: 12px; height: 12px; padding: 0; flex-shrink: 0; border-radius: 50%; font-size: 0; }
+    #jst-time, #bottom-title, #quake-sidebar-toggle { display: none; }
+    #quake-sidebar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+    .leaflet-bottom { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+    #settings-popup, #timeline-panel, #map-key { bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+    #settings-popup { max-height: calc(100dvh - 88px - env(safe-area-inset-bottom, 0px)); }
+}
 
 /* ── Settings popup ── */
 #settings-popup {
@@ -525,5 +561,5 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     #timeline-panel { padding: 8px 10px 10px; gap: 6px; }
     #timeline-row-top { gap: 3px; }
     #timeline-row-top .bar-btn { padding: 3px 6px; font-size: 0.8em; }
-    #map-key { bottom: 78px; }
+    #map-key { bottom: calc(78px + env(safe-area-inset-bottom, 0px)); }
 }

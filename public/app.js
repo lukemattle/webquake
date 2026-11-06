@@ -306,8 +306,45 @@ let muteTsunamiWarning = false;
 let muteTsunamiAdvisory = false;
 
 function toggleSettings() {
+    closeBarMenus();
     document.getElementById('settings-popup').classList.toggle('visible');
 }
+
+function closeBarMenus() {
+    for (const name of ['language', 'links']) {
+        document.getElementById(name + '-menu').hidden = true;
+        document.getElementById(name + '-btn').setAttribute('aria-expanded', 'false');
+    }
+}
+
+function toggleBarMenu(name) {
+    const popup = document.getElementById(name + '-menu');
+    const opening = popup.hidden;
+    closeBarMenus();
+    document.getElementById('settings-popup').classList.remove('visible');
+    popup.hidden = !opening;
+    document.getElementById(name + '-btn').setAttribute('aria-expanded', String(opening));
+}
+
+function selectBarLanguage(lang) {
+    setLanguage(lang);
+    closeBarMenus();
+    document.getElementById('language-btn').focus();
+}
+
+document.addEventListener('click', event => {
+    if (!event.target.closest('.bar-menu') || event.target.closest('.bar-menu-popup a')) closeBarMenus();
+});
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    for (const name of ['language', 'links']) {
+        if (!document.getElementById(name + '-menu').hidden) {
+            closeBarMenus();
+            document.getElementById(name + '-btn').focus();
+            break;
+        }
+    }
+});
 const LIVE_REGION_COLOURING_KEY = 'webquake_live_region_colouring';
 let liveRegionColouring = localStorage.getItem(LIVE_REGION_COLOURING_KEY) !== '0';
 
@@ -320,7 +357,7 @@ function setLiveRegionColouring(enabled) {
 document.addEventListener('click', e => {
     const popup = document.getElementById('settings-popup');
     const btn   = document.getElementById('settings-btn');
-    if (popup.classList.contains('visible') && !popup.contains(e.target) && e.target !== btn) {
+    if (popup.classList.contains('visible') && !popup.contains(e.target) && !btn.contains(e.target)) {
         popup.classList.remove('visible');
     }
 });
@@ -3320,6 +3357,10 @@ function t(en, ja, zh) {
 function setLanguage(lang) {
     currentLanguage = lang;
     document.documentElement.lang = lang;
+    document.getElementById('language-btn').textContent = lang.toUpperCase() + ' ▾';
+    for (const button of document.querySelectorAll('[data-language]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.language === lang));
+    }
     const boreholeRow = document.getElementById('sp-borehole-row');
     if (boreholeRow) boreholeRow.title = t(
         'Underground station. Colours are for illustration only and should not be compared directly with surface stations, as underground observation conditions differ.',
@@ -3364,6 +3405,7 @@ let reconnectTimer = null;
 
 function updateConnectionStatus(text, bg) {
     const el = document.getElementById('connection-status');
+    el.title = text;
     el.textContent = text;
     el.style.background = bg;
     el.style.color = bg === '#8f8' ? '#000' : '#fff';
@@ -3456,6 +3498,7 @@ createWebSocket();
 
 // Earthquake history sidebar
 let quakeSidebarCollapsed = window.innerWidth <= 600;
+document.getElementById('history-btn').setAttribute('aria-expanded', String(!quakeSidebarCollapsed));
 if (quakeSidebarCollapsed) {
     document.getElementById('quake-sidebar').classList.add('collapsed');
     const btn = document.getElementById('quake-sidebar-toggle');
@@ -3464,7 +3507,9 @@ if (quakeSidebarCollapsed) {
 }
 
 function toggleQuakeSidebar() {
+    closeBarMenus();
     quakeSidebarCollapsed = !quakeSidebarCollapsed;
+    document.getElementById('history-btn').setAttribute('aria-expanded', String(!quakeSidebarCollapsed));
     const sb  = document.getElementById('quake-sidebar');
     const btn = document.getElementById('quake-sidebar-toggle');
     sb.classList.toggle('collapsed', quakeSidebarCollapsed);
