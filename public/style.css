@@ -56,6 +56,9 @@ body { margin: 0; overflow: hidden; font-family: Roboto, sans-serif; background:
     display: flex; flex-direction: column; overflow: hidden;
 }
 #regions-panel[hidden], #region-popup[hidden] { display: none; }
+#regions-entry { display: none; }
+#regions-header { display: flex; flex-shrink: 0; }
+#regions-close { display: none; }
 body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; pointer-events: auto; }
 #regions-toggle {
     display: flex; align-items: center; gap: 8px; width: 100%; flex-shrink: 0;
@@ -590,4 +593,26 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     .leaflet-bottom { bottom: var(--mobile-footer-height); }
     #settings-popup, #timeline-panel, #map-key { bottom: calc(var(--mobile-footer-height) + 8px); }
     #settings-popup { max-height: calc(100dvh - var(--mobile-footer-height) - 28px); }
+    #regions-entry:not([hidden]) {
+        display: inline-flex; position: absolute; left: 10px; z-index: 1000;
+        height: 36px; gap: 5px; padding: 0 10px; background: rgba(15,15,15,0.94);
+    }
+    #regions-panel {
+        top: auto; left: 8px; right: 8px; bottom: calc(var(--mobile-footer-height) + 8px);
+        width: auto; max-width: none; max-height: none; z-index: 1002;
+        height: min(50dvh, calc(100dvh - var(--mobile-footer-height) - 24px));
+        border: 1px solid #333; border-radius: 12px 12px 6px 6px;
+        background: rgba(15,15,15,0.98); box-shadow: 0 -4px 20px #0006;
+    }
+    #regions-header { align-items: center; gap: 8px; padding: 8px 10px; }
+    #regions-toggle { padding: 0; min-height: 36px; font-size: 0.82em; }
+    #regions-chevron { display: none; }
+    #regions-close { display: inline-flex; min-width: 36px; height: 36px; flex-shrink: 0; }
+    #regions-content { flex: 1; }
+    #regions-panel th { position: sticky; top: 0; background: #171717; font-size: 0.7em; }
+    #regions-panel th:last-child { width: 40px; }
+    #regions-panel th:first-child { width: 42%; }
+    #regions-panel td { padding: 6px 4px; }
+    #regions-panel .region-select { min-height: 36px; font-size: 0.82em; }
+    #regions-panel .region-locate { min-width: 36px; min-height: 36px; }
 }

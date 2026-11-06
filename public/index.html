@@ -145,11 +145,15 @@
 </div>
 
 <!-- Regional estimates and EEW forecasts below the observed summary -->
+<button id="regions-entry" class="bar-btn" type="button" onclick="setRegionSheetOpen(true)" aria-expanded="false" aria-controls="regions-panel" hidden><span class="en">Regions</span><span class="ja">地域</span><span class="zh">區域</span> · <span id="regions-entry-count">0</span></button>
 <section id="regions-panel" aria-labelledby="regions-title" hidden>
-    <button id="regions-toggle" type="button" onclick="toggleRegionPanel()" aria-expanded="true" aria-controls="regions-content">
-        <span id="regions-title"><span class="en">Regions</span><span class="ja">地域</span><span class="zh">區域</span></span>
-        <span id="regions-count"></span><span id="regions-chevron" aria-hidden="true">▾</span>
-    </button>
+    <div id="regions-header">
+        <button id="regions-toggle" type="button" onclick="toggleRegionPanel()" aria-expanded="true" aria-controls="regions-content">
+            <span id="regions-title"><span class="en">Regions</span><span class="ja">地域</span><span class="zh">區域</span></span>
+            <span id="regions-count"></span><span id="regions-chevron" aria-hidden="true">▾</span>
+        </button>
+        <button id="regions-close" class="bar-btn" type="button" onclick="setRegionSheetOpen(false)" aria-label="Close regions">✕</button>
+    </div>
     <div id="regions-content">
         <table>
             <thead><tr>
