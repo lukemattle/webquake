@@ -306,8 +306,50 @@ let muteTsunamiWarning = false;
 let muteTsunamiAdvisory = false;
 
 function toggleSettings() {
+    closeBarMenus();
+    if (window.innerWidth <= 750 && !document.getElementById('settings-popup').classList.contains('visible')) {
+        if (mobileRegionsOpen) setRegionSheetOpen(false);
+        collapseSidebarOnMobile();
+    }
     document.getElementById('settings-popup').classList.toggle('visible');
 }
+
+function closeBarMenus() {
+    for (const name of ['language', 'links']) {
+        document.getElementById(name + '-menu').hidden = true;
+        document.getElementById(name + '-btn').setAttribute('aria-expanded', 'false');
+    }
+}
+
+function toggleBarMenu(name) {
+    const popup = document.getElementById(name + '-menu');
+    const opening = popup.hidden;
+    closeBarMenus();
+    document.getElementById('settings-popup').classList.remove('visible');
+    popup.hidden = !opening;
+    document.getElementById(name + '-btn').setAttribute('aria-expanded', String(opening));
+}
+
+function selectBarLanguage(lang) {
+    setLanguage(lang);
+    closeBarMenus();
+    document.getElementById('language-btn').focus();
+}
+
+document.addEventListener('click', event => {
+    if (!event.target.closest('.bar-menu') || event.target.closest('.bar-menu-popup a')) closeBarMenus();
+});
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    for (const name of ['language', 'links']) {
+        if (!document.getElementById(name + '-menu').hidden) {
+            event.preventDefault();
+            closeBarMenus();
+            document.getElementById(name + '-btn').focus();
+            break;
+        }
+    }
+});
 const LIVE_REGION_COLOURING_KEY = 'webquake_live_region_colouring';
 let liveRegionColouring = localStorage.getItem(LIVE_REGION_COLOURING_KEY) !== '0';
 
@@ -320,7 +362,7 @@ function setLiveRegionColouring(enabled) {
 document.addEventListener('click', e => {
     const popup = document.getElementById('settings-popup');
     const btn   = document.getElementById('settings-btn');
-    if (popup.classList.contains('visible') && !popup.contains(e.target) && e.target !== btn) {
+    if (popup.classList.contains('visible') && !popup.contains(e.target) && !btn.contains(e.target)) {
         popup.classList.remove('visible');
     }
 });
@@ -412,7 +454,7 @@ function formatPga(gal) {
 
 // Map init
 const DEFAULT_CENTER = [38.5, 138.5];
-const DEFAULT_ZOOM   = (window.innerWidth < window.innerHeight && window.innerWidth < 600) ? 5 : 6;
+const DEFAULT_ZOOM   = (window.innerWidth < window.innerHeight && window.innerWidth <= 750) ? 5 : 6;
 const QUAKE_ZOOM     = 7;
 const RYUKYU_CENTER  = [26.5, 128.0];
 const RYUKYU_ZOOM    = 7;
@@ -1221,6 +1263,7 @@ function clearReportRegionColors() {
 let regionRows = [];
 let regionRowElements = new Map();
 let regionsCollapsed = false;
+let mobileRegionsOpen = false;
 let selectedRegionCode = null;
 let selectedRegionAnchor = null;
 let selectedRegionOutline = null;
@@ -1263,12 +1306,12 @@ function setRegionIntensityBadge(element, value, source) {
 }
 
 function renderRegionPanel() {
-    const panel = document.getElementById('regions-panel');
     regionRows = getRegionRows();
-    panel.hidden = regionRows.length === 0;
-    document.body.classList.toggle('has-regions', !panel.hidden);
+    if (!regionRows.length) mobileRegionsOpen = false;
+    updateRegionPanelState();
     if (!regionRows.some(row => row.code === selectedRegionCode)) clearRegionSelection();
     document.getElementById('regions-count').textContent = regionRows.length;
+    document.getElementById('regions-entry-count').textContent = regionRows.length;
     const signature = JSON.stringify([currentLanguage, regionRows.map(row => [row.code, row.live, row.forecast, regionDisplayName(row.code)])]);
     if (signature !== _regionPanelState) {
         _regionPanelState = signature;
@@ -1330,11 +1373,44 @@ function updateRegionSelectedRows() {
 }
 
 function toggleRegionPanel() {
+    if (window.matchMedia('(max-width: 750px)').matches) {
+        setRegionSheetOpen(false);
+        return;
+    }
     regionsCollapsed = !regionsCollapsed;
     document.getElementById('regions-content').hidden = regionsCollapsed;
     document.getElementById('regions-toggle').setAttribute('aria-expanded', String(!regionsCollapsed));
     document.getElementById('regions-chevron').textContent = regionsCollapsed ? '▸' : '▾';
     positionTsunamiPanel();
+}
+
+function updateRegionPanelState() {
+    const mobile = window.matchMedia('(max-width: 750px)').matches;
+    const panel = document.getElementById('regions-panel');
+    const entry = document.getElementById('regions-entry');
+    const visible = regionRows.length > 0;
+    entry.hidden = !mobile || !visible;
+    const hidden = !visible || (mobile && !mobileRegionsOpen);
+    if (hidden && panel.contains(document.activeElement)) {
+        (entry.hidden ? document.getElementById('history-btn') : entry).focus();
+    }
+    panel.hidden = hidden;
+    entry.setAttribute('aria-expanded', String(mobile && mobileRegionsOpen && visible));
+    document.body.classList.toggle('has-regions', visible);
+    document.getElementById('regions-content').hidden = !mobile && regionsCollapsed;
+    document.getElementById('regions-toggle').setAttribute('aria-expanded', String(mobile || !regionsCollapsed));
+}
+
+function setRegionSheetOpen(open) {
+    mobileRegionsOpen = open && regionRows.length > 0;
+    if (mobileRegionsOpen) {
+        closeBarMenus();
+        collapseSidebarOnMobile();
+    }
+    updateRegionPanelState();
+    positionObsPanel();
+    if (mobileRegionsOpen) document.getElementById('regions-close').focus();
+    updateMobilePanelOffsets();
 }
 
 function clearRegionSelection() {
@@ -1402,18 +1478,22 @@ function renderSelectedRegion() {
 
 function regionMapSpace() {
     const size = map.getSize();
-    const panels = ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel'].map(id => document.getElementById(id))
+    const panels = ['eew-panel', 'obs-panel', window.innerWidth <= 750 ? 'regions-entry' : 'regions-panel', 'tsunami-panel'].map(id => document.getElementById(id))
         .filter(element => element.getClientRects().length).map(element => element.getBoundingClientRect());
-    const mobile = size.x < 800;
-    const right = size.x - (!quakeSidebarCollapsed ? Math.min(258, size.x - 120) : 0) - 12;
+    const mobile = size.x <= 750;
+    const historySheetOpen = window.innerWidth <= 750 && !quakeSidebarCollapsed;
+    const right = size.x - (!quakeSidebarCollapsed && !historySheetOpen ? Math.min(258, size.x - 120) : 0) - 12;
     let left = mobile ? 12 : Math.max(12, ...panels.map(rect => rect.right + 12));
     const top = mobile ? Math.max(12, ...panels.map(rect => rect.bottom + 12)) : 12;
     const timeline = document.getElementById('timeline-panel');
-    let bottom = timeline.classList.contains('visible') ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
+    let bottom = timeline.classList.contains('visible') && getComputedStyle(timeline).visibility !== 'hidden'
+        ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
+    if (historySheetOpen) bottom = Math.min(bottom, document.getElementById('quake-sidebar').getBoundingClientRect().top - 12);
+    if (window.innerWidth <= 750 && mobileRegionsOpen) bottom = Math.min(bottom, document.getElementById('regions-panel').getBoundingClientRect().top - 12);
     const zoom = document.querySelector('.leaflet-control-zoom');
     if (zoom) bottom = Math.min(bottom, zoom.getBoundingClientRect().top - 12);
     const key = document.getElementById('map-key');
-    if (mobile && key.classList.contains('visible') && key.getBoundingClientRect().bottom > top) {
+    if (mobile && key.classList.contains('visible') && key.style.visibility !== 'hidden' && key.getBoundingClientRect().bottom > top) {
         left = Math.max(left, key.getBoundingClientRect().right + 12);
     }
     return {left: Math.min(left, right - 120), top: Math.min(top, bottom - 120), right, bottom};
@@ -1421,6 +1501,7 @@ function regionMapSpace() {
 
 function locateRegion(code) {
     collapseSidebarOnMobile();
+    if (window.innerWidth <= 750) setRegionSheetOpen(false);
     selectRegion(code);
     const layer = regionLayersByCode.get(code);
     if (!layer || selectedRegionCode !== code) return;
@@ -1570,7 +1651,7 @@ function getRegionLabelShape(code) {
 function regionLabelObstacles() {
     const obstacles = [], size = map.getSize(), zoom = map.getZoom();
     const mapRect = map.getContainer().getBoundingClientRect();
-    const selectors = '#eew-panel,#obs-panel,#regions-panel,#tsunami-panel,#map-key,#quake-sidebar,#quake-sidebar-toggle,#bottom-bar,#timeline-panel,#settings-popup,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control,.leaflet-marker-icon';
+    const selectors = '#eew-panel,#obs-panel,#regions-entry,#regions-panel,#tsunami-panel,#map-key,#quake-sidebar,#quake-sidebar-toggle,#bottom-bar,#timeline-panel,#settings-popup,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control,.leaflet-marker-icon';
     for (const element of [...document.querySelectorAll(selectors), ...epicenterLayer.children]) {
         if (!element.getClientRects().length) continue;
         const rect = element.getBoundingClientRect();
@@ -3104,15 +3185,22 @@ function renderTsunamiCard() {
     updateMapKey();
 }
 
+// Mobile summary cards share a row, so following panels must clear both.
+function summaryPanelsBottom() {
+    const eew = document.getElementById('eew-panel');
+    const obs = document.getElementById('obs-panel');
+    return Math.max(eew.getBoundingClientRect().bottom,
+        obs.classList.contains('visible') ? obs.getBoundingClientRect().bottom : 0);
+}
+
 function positionTsunamiPanel() {
     positionRegionsPanel();
     const panel = document.getElementById('tsunami-panel');
     if (panel.classList.contains('visible')) {
         const regionsEl = document.getElementById('regions-panel');
-        const obsEl = document.getElementById('obs-panel');
-        const eewEl = document.getElementById('eew-panel');
-        const anchor = !regionsEl.hidden ? regionsEl : obsEl.classList.contains('visible') ? obsEl : eewEl;
-        panel.style.top = (anchor.getBoundingClientRect().bottom + 6) + 'px';
+        const anchor = window.innerWidth <= 750 ? document.getElementById('regions-entry') : regionsEl;
+        const bottom = !anchor.hidden ? anchor.getBoundingClientRect().bottom : summaryPanelsBottom();
+        panel.style.top = (bottom + 6) + 'px';
         panel.style.left = '10px';
     }
     positionMapKey();
@@ -3122,13 +3210,18 @@ function positionTsunamiPanel() {
 
 function positionRegionsPanel() {
     const panel = document.getElementById('regions-panel');
+    const entry = document.getElementById('regions-entry');
+    if (window.innerWidth <= 750) {
+        entry.style.top = (summaryPanelsBottom() + 6) + 'px';
+        panel.style.top = '';
+        panel.style.maxHeight = '';
+        return;
+    }
     if (panel.hidden) return;
-    const obs = document.getElementById('obs-panel');
-    const anchor = obs.classList.contains('visible') ? obs : document.getElementById('eew-panel');
-    const top = anchor.getBoundingClientRect().bottom + 6;
+    const top = summaryPanelsBottom() + 6;
     const tsunami = document.getElementById('tsunami-panel');
     const tsunamiHeight = tsunami.classList.contains('visible') ? tsunami.offsetHeight + 6 : 0;
-    const bottomReserve = window.innerWidth <= 650 ? 90 : 50;
+    const bottomReserve = window.innerWidth <= 750 ? 90 : 50;
     const key = document.getElementById('map-key');
     const bottom = key.classList.contains('visible')
         ? Math.min(window.innerHeight - bottomReserve, key.getBoundingClientRect().bottom - 80)
@@ -3140,10 +3233,37 @@ function positionRegionsPanel() {
 function positionMapKey() {
     const key = document.getElementById('map-key');
     if (!key.classList.contains('visible')) return;
-    const bottom = Math.max(...['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']
+    const bottom = Math.max(...['eew-panel', 'obs-panel', window.innerWidth <= 750 ? 'regions-entry' : 'regions-panel', 'tsunami-panel']
         .map(id => document.getElementById(id)).filter(element => element.getClientRects().length)
         .map(element => element.getBoundingClientRect().bottom));
-    key.style.maxHeight = Math.max(40, key.getBoundingClientRect().bottom - bottom - 8) + 'px';
+    const available = key.getBoundingClientRect().bottom - bottom - 8;
+    key.style.visibility = window.innerWidth <= 750 && available < 40 ? 'hidden' : '';
+    key.style.maxHeight = Math.max(40, available) + 'px';
+}
+
+function updateMobilePanelOffsets() {
+    const root = document.documentElement;
+    if (window.innerWidth > 750) {
+        root.style.removeProperty('--mobile-footer-offset');
+        root.style.removeProperty('--mobile-map-bottom');
+        document.body.classList.remove('mobile-sheet-open');
+        positionMapKey();
+        return;
+    }
+    const footerHeight = Math.ceil(document.getElementById('bottom-bar').getBoundingClientRect().height);
+    root.style.setProperty('--mobile-footer-offset', footerHeight + 'px');
+    const sheets = ['quake-sidebar', 'regions-panel'].map(id => document.getElementById(id))
+        .filter(element => element.getClientRects().length);
+    document.body.classList.toggle('mobile-sheet-open', sheets.length > 0);
+    const replay = document.getElementById('timeline-panel');
+    const overlays = [...sheets];
+    if (!sheets.length && replay.classList.contains('visible')) overlays.push(replay);
+    const bottom = Math.max(footerHeight, ...overlays.map(element =>
+        Math.ceil(window.innerHeight - element.getBoundingClientRect().top + 8)));
+    root.style.setProperty('--mobile-map-bottom', bottom + 'px');
+    positionMapKey();
+    positionRegionPopup();
+    scheduleRegionMapLabels();
 }
 
 // EEW panel
@@ -3289,8 +3409,9 @@ function positionObsPanel() {
     const eewEl = document.getElementById('eew-panel');
     const obsEl = document.getElementById('obs-panel');
     const rect  = eewEl.getBoundingClientRect();
-    obsEl.style.top  = (rect.bottom + 6) + 'px';
-    obsEl.style.left = '10px';
+    const mobile = window.matchMedia('(max-width: 750px)').matches;
+    obsEl.style.top = (mobile ? rect.top : rect.bottom + 6) + 'px';
+    obsEl.style.left = mobile ? '' : '10px';
     positionTsunamiPanel();
 }
 
@@ -3315,6 +3436,10 @@ function t(en, ja, zh) {
 function setLanguage(lang) {
     currentLanguage = lang;
     document.documentElement.lang = lang;
+    document.getElementById('language-btn').textContent = lang.toUpperCase() + ' ▾';
+    for (const button of document.querySelectorAll('[data-language]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.language === lang));
+    }
     const boreholeRow = document.getElementById('sp-borehole-row');
     if (boreholeRow) boreholeRow.title = t(
         'Underground station. Colours are for illustration only and should not be compared directly with surface stations, as underground observation conditions differ.',
@@ -3345,7 +3470,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Periodic fallback; displayData refreshes immediately for new events.
     if (!_timelineRefreshTimer) _timelineRefreshTimer = setInterval(loadTimelineMarkersAndGaps, 300000);
     const panelResize = new ResizeObserver(positionObsPanel);
-    for (const id of ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
+    for (const id of ['eew-panel', 'obs-panel', 'regions-entry', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
+    window.addEventListener('resize', positionObsPanel);
+    const mobileOverlayResize = new ResizeObserver(() => requestAnimationFrame(updateMobilePanelOffsets));
+    for (const id of ['bottom-bar', 'timeline-panel', 'quake-sidebar', 'regions-panel']) mobileOverlayResize.observe(document.getElementById(id));
+    window.addEventListener('resize', updateMobilePanelOffsets);
+    updateMobilePanelOffsets();
     const labelResize = new ResizeObserver(scheduleRegionMapLabels);
     for (const element of document.querySelectorAll('#settings-popup,#timeline-panel,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control')) labelResize.observe(element);
     document.getElementById('quake-sidebar').addEventListener('transitionend', scheduleRegionMapLabels);
@@ -3358,6 +3488,7 @@ let reconnectTimer = null;
 
 function updateConnectionStatus(text, bg) {
     const el = document.getElementById('connection-status');
+    el.title = text;
     el.textContent = text;
     el.style.background = bg;
     el.style.color = bg === '#8f8' ? '#000' : '#fff';
@@ -3449,31 +3580,85 @@ function createWebSocket() {
 createWebSocket();
 
 // Earthquake history sidebar
-let quakeSidebarCollapsed = window.innerWidth <= 600;
-if (quakeSidebarCollapsed) {
-    document.getElementById('quake-sidebar').classList.add('collapsed');
-    const btn = document.getElementById('quake-sidebar-toggle');
-    btn.classList.add('sidebar-collapsed');
-    btn.textContent = '◀';
-}
+const mobileHistoryLayout = window.matchMedia('(max-width: 750px)');
+let quakeSidebarCollapsed = mobileHistoryLayout.matches;
+updateQuakeSidebarState();
 
-function toggleQuakeSidebar() {
-    quakeSidebarCollapsed = !quakeSidebarCollapsed;
+function updateQuakeSidebarState() {
+    document.getElementById('history-btn').setAttribute('aria-expanded', String(!quakeSidebarCollapsed));
     const sb  = document.getElementById('quake-sidebar');
     const btn = document.getElementById('quake-sidebar-toggle');
+    if (quakeSidebarCollapsed && sb.contains(document.activeElement)) document.getElementById('history-btn').focus();
+    sb.inert = quakeSidebarCollapsed;
     sb.classList.toggle('collapsed', quakeSidebarCollapsed);
     btn.classList.toggle('sidebar-collapsed', quakeSidebarCollapsed);
     btn.textContent = quakeSidebarCollapsed ? '◀' : '▶';
     const leafletRight = document.querySelector('.leaflet-bottom.leaflet-right');
-    if (leafletRight) leafletRight.style.right = quakeSidebarCollapsed ? '0' : '262px';
+    if (leafletRight) leafletRight.style.right = quakeSidebarCollapsed || mobileHistoryLayout.matches ? '0' : '262px';
+}
+
+function toggleQuakeSidebar() {
+    closeBarMenus();
+    if (mobileHistoryLayout.matches && quakeSidebarCollapsed && mobileRegionsOpen) setRegionSheetOpen(false);
+    quakeSidebarCollapsed = !quakeSidebarCollapsed;
+    if (!quakeSidebarCollapsed && mobileHistoryLayout.matches) setHistoryExpanded(false);
+    updateQuakeSidebarState();
+    if (!quakeSidebarCollapsed && mobileHistoryLayout.matches) document.getElementById('history-expand-btn').focus();
+    updateMobilePanelOffsets();
     positionRegionPopup();
     scheduleRegionMapLabels();
 }
 
+function setHistoryExpanded(expanded) {
+    document.getElementById('quake-sidebar').classList.toggle('history-expanded', expanded);
+    const button = document.getElementById('history-expand-btn');
+    button.setAttribute('aria-expanded', String(expanded));
+    button.querySelector('.history-expand-label').hidden = expanded;
+    button.querySelector('.history-shrink-label').hidden = !expanded;
+}
+
+function toggleHistoryExpanded() {
+    const sidebar = document.getElementById('quake-sidebar');
+    setHistoryExpanded(!sidebar.classList.contains('history-expanded'));
+}
+
+mobileHistoryLayout.addEventListener('change', () => {
+    closeBarMenus();
+    mobileRegionsOpen = false;
+    updateRegionPanelState();
+    positionObsPanel();
+    if (mobileHistoryLayout.matches) quakeSidebarCollapsed = true;
+    setHistoryExpanded(false);
+    updateQuakeSidebarState();
+    positionRegionPopup();
+    scheduleRegionMapLabels();
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !event.defaultPrevented && mobileHistoryLayout.matches && mobileRegionsOpen) {
+        event.preventDefault();
+        setRegionSheetOpen(false);
+    }
+    if (event.key === 'Escape' && !event.defaultPrevented && mobileHistoryLayout.matches && !quakeSidebarCollapsed) {
+        event.preventDefault();
+        toggleQuakeSidebar();
+    }
+});
+
+// Capture outside clicks before Leaflet or other controls stop propagation.
+document.addEventListener('click', event => {
+    if (!mobileHistoryLayout.matches) return;
+    if (mobileRegionsOpen && !event.target.closest('#regions-panel, #regions-entry')) {
+        setRegionSheetOpen(false);
+    }
+    if (!quakeSidebarCollapsed && !event.target.closest('#quake-sidebar, #history-btn')) {
+        toggleQuakeSidebar();
+    }
+}, true);
+
 // Collapses the quake history sidebar after a map/replay action on mobile,
 // where it overlays the map and would otherwise block the view.
 function collapseSidebarOnMobile() {
-    if (window.innerWidth <= 600 && !quakeSidebarCollapsed) toggleQuakeSidebar();
+    if (mobileHistoryLayout.matches && !quakeSidebarCollapsed) toggleQuakeSidebar();
 }
 
 function parseQuakeDepth(cod) {
@@ -4435,16 +4620,37 @@ function setHideTimelineFeature(checked) {
 
 function openTimelinePanel() {
     if (hideTimelineFeature) return;
+    if (window.innerWidth <= 750 && mobileRegionsOpen) setRegionSheetOpen(false);
+    collapseSidebarOnMobile();
+    closeBarMenus();
+    if (!timelinePanelOpen) setTimelineDetails(false);
     timelinePanelOpen = true;
     document.getElementById('timeline-panel').classList.add('visible');
     renderTimelineOverlays();
     if (!replayActive) enterReplay();
     else updateTimelineUI();
+    updateMobilePanelOffsets();
 }
 
 function closeTimelinePanel() {
     timelinePanelOpen = false;
     document.getElementById('timeline-panel').classList.remove('visible');
+    setTimelineDetails(false);
+    updateMobilePanelOffsets();
+}
+
+function setTimelineDetails(expanded) {
+    document.getElementById('timeline-panel').classList.toggle('timeline-expanded', expanded);
+    const button = document.getElementById('timeline-details-btn');
+    button.setAttribute('aria-expanded', String(expanded));
+    button.querySelector('.timeline-more-label').hidden = expanded;
+    button.querySelector('.timeline-less-label').hidden = !expanded;
+}
+
+function toggleTimelineDetails() {
+    const panel = document.getElementById('timeline-panel');
+    setTimelineDetails(!panel.classList.contains('timeline-expanded'));
+    updateMobilePanelOffsets();
 }
 
 function toggleTimelinePanel() {
@@ -4458,6 +4664,7 @@ function toggleTimelinePanel() {
 
 document.addEventListener('keydown', (e) => {
     if (!timelinePanelOpen) return;
+    if (window.innerWidth <= 750 && document.body.classList.contains('mobile-sheet-open')) return;
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.key === 'ArrowLeft') {
