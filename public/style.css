@@ -224,13 +224,13 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
     #quake-sidebar {
         top: auto; left: 8px; right: 8px; width: auto;
         z-index: 1002;
-        height: min(50dvh, calc(100dvh - var(--mobile-footer-height) - 24px));
+        height: min(50dvh, calc(100dvh - var(--mobile-footer-offset) - 24px));
         border: 1px solid #333; border-radius: 12px 12px 6px 6px;
         background: rgba(15,15,15,0.98); box-shadow: 0 -4px 20px #0006;
         transition: height 0.2s ease;
     }
     #quake-sidebar.collapsed { width: auto; display: none; }
-    #quake-sidebar.history-expanded { height: calc(100dvh - var(--mobile-footer-height) - 24px); }
+    #quake-sidebar.history-expanded { height: calc(100dvh - var(--mobile-footer-offset) - 24px); }
     #quake-sidebar-header {
         display: grid; grid-template-columns: minmax(0, 1fr) auto;
         padding: 8px 10px; gap: 6px 8px; color: #bbb; font-size: 0.82em;
@@ -520,6 +520,7 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
 @keyframes tl-spin { to { transform: rotate(360deg); } }
 #timeline-loading-svg { animation: tl-spin 0.8s linear infinite; transform-origin: center; }
 #timeline-live-btn { margin-left: 10px; }
+#timeline-details-btn { display: none; }
 #timeline-live-btn.tl-replaying { background: #c0392b; }
 #timeline-live-btn.tl-replaying:hover { background: #e74c3c; }
 #timeline-track { position: relative; height: 22px; }
@@ -567,7 +568,11 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
 
 /* Keep footer offsets after the base panel rules. */
 @media (max-width: 650px) {
-    :root { --mobile-footer-height: calc(48px + env(safe-area-inset-bottom, 0px)); }
+    :root {
+        --mobile-footer-height: calc(48px + env(safe-area-inset-bottom, 0px));
+        --mobile-footer-offset: var(--mobile-footer-height);
+        --mobile-map-bottom: var(--mobile-footer-offset);
+    }
     #bottom-bar {
         z-index: 1003;
         height: var(--mobile-footer-height);
@@ -589,18 +594,19 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     }
     #bottom-version { font-size: 11px; font-weight: 400; color: #aaa; }
     #links-control { margin-left: 0; }
-    #quake-sidebar { bottom: calc(var(--mobile-footer-height) + 8px); }
-    .leaflet-bottom { bottom: var(--mobile-footer-height); }
-    #settings-popup, #timeline-panel, #map-key { bottom: calc(var(--mobile-footer-height) + 8px); }
-    #settings-popup { max-height: calc(100dvh - var(--mobile-footer-height) - 28px); }
+    #quake-sidebar { bottom: calc(var(--mobile-footer-offset) + 8px); }
+    .leaflet-bottom { bottom: var(--mobile-map-bottom); }
+    #settings-popup, #timeline-panel { bottom: calc(var(--mobile-footer-offset) + 8px); }
+    #map-key { bottom: calc(var(--mobile-map-bottom) + 24px); }
+    #settings-popup { max-height: calc(100dvh - var(--mobile-footer-offset) - 28px); }
     #regions-entry:not([hidden]) {
         display: inline-flex; position: absolute; left: 10px; z-index: 1000;
         height: 36px; gap: 5px; padding: 0 10px; background: rgba(15,15,15,0.94);
     }
     #regions-panel {
-        top: auto; left: 8px; right: 8px; bottom: calc(var(--mobile-footer-height) + 8px);
+        top: auto; left: 8px; right: 8px; bottom: calc(var(--mobile-footer-offset) + 8px);
         width: auto; max-width: none; max-height: none; z-index: 1002;
-        height: min(50dvh, calc(100dvh - var(--mobile-footer-height) - 24px));
+        height: min(50dvh, calc(100dvh - var(--mobile-footer-offset) - 24px));
         border: 1px solid #333; border-radius: 12px 12px 6px 6px;
         background: rgba(15,15,15,0.98); box-shadow: 0 -4px 20px #0006;
     }
@@ -615,4 +621,12 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     #regions-panel td { padding: 6px 4px; }
     #regions-panel .region-select { min-height: 36px; font-size: 0.82em; }
     #regions-panel .region-locate { min-width: 36px; min-height: 36px; }
+    #timeline-panel { max-height: calc(100dvh - var(--mobile-footer-offset) - 24px); overflow-y: auto; }
+    #timeline-row-top { margin-right: 32px; gap: 4px; }
+    #timeline-row-top .bar-btn { min-height: 32px; min-width: 32px; padding: 0 6px; }
+    #timeline-live-btn { margin-left: 0; }
+    #timeline-close { top: 8px; right: 6px; width: 32px; height: 32px; padding: 0; }
+    #timeline-details-btn { display: inline-flex; }
+    #timeline-panel:not(.timeline-expanded) .timeline-extra-jump { display: none; }
+    body.mobile-sheet-open #timeline-panel { visibility: hidden; pointer-events: none; }
 }

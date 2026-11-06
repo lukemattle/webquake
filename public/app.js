@@ -307,6 +307,10 @@ let muteTsunamiAdvisory = false;
 
 function toggleSettings() {
     closeBarMenus();
+    if (window.innerWidth <= 650 && !document.getElementById('settings-popup').classList.contains('visible')) {
+        if (mobileRegionsOpen) setRegionSheetOpen(false);
+        collapseSidebarOnMobile();
+    }
     document.getElementById('settings-popup').classList.toggle('visible');
 }
 
@@ -1406,6 +1410,7 @@ function setRegionSheetOpen(open) {
     updateRegionPanelState();
     positionObsPanel();
     if (mobileRegionsOpen) document.getElementById('regions-close').focus();
+    updateMobilePanelOffsets();
 }
 
 function clearRegionSelection() {
@@ -1481,13 +1486,14 @@ function regionMapSpace() {
     let left = mobile ? 12 : Math.max(12, ...panels.map(rect => rect.right + 12));
     const top = mobile ? Math.max(12, ...panels.map(rect => rect.bottom + 12)) : 12;
     const timeline = document.getElementById('timeline-panel');
-    let bottom = timeline.classList.contains('visible') ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
+    let bottom = timeline.classList.contains('visible') && getComputedStyle(timeline).visibility !== 'hidden'
+        ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
     if (historySheetOpen) bottom = Math.min(bottom, document.getElementById('quake-sidebar').getBoundingClientRect().top - 12);
     if (window.innerWidth <= 650 && mobileRegionsOpen) bottom = Math.min(bottom, document.getElementById('regions-panel').getBoundingClientRect().top - 12);
     const zoom = document.querySelector('.leaflet-control-zoom');
     if (zoom) bottom = Math.min(bottom, zoom.getBoundingClientRect().top - 12);
     const key = document.getElementById('map-key');
-    if (mobile && key.classList.contains('visible') && key.getBoundingClientRect().bottom > top) {
+    if (mobile && key.classList.contains('visible') && key.style.visibility !== 'hidden' && key.getBoundingClientRect().bottom > top) {
         left = Math.max(left, key.getBoundingClientRect().right + 12);
     }
     return {left: Math.min(left, right - 120), top: Math.min(top, bottom - 120), right, bottom};
@@ -3230,7 +3236,34 @@ function positionMapKey() {
     const bottom = Math.max(...['eew-panel', 'obs-panel', window.innerWidth <= 650 ? 'regions-entry' : 'regions-panel', 'tsunami-panel']
         .map(id => document.getElementById(id)).filter(element => element.getClientRects().length)
         .map(element => element.getBoundingClientRect().bottom));
-    key.style.maxHeight = Math.max(40, key.getBoundingClientRect().bottom - bottom - 8) + 'px';
+    const available = key.getBoundingClientRect().bottom - bottom - 8;
+    key.style.visibility = window.innerWidth <= 650 && available < 40 ? 'hidden' : '';
+    key.style.maxHeight = Math.max(40, available) + 'px';
+}
+
+function updateMobilePanelOffsets() {
+    const root = document.documentElement;
+    if (window.innerWidth > 650) {
+        root.style.removeProperty('--mobile-footer-offset');
+        root.style.removeProperty('--mobile-map-bottom');
+        document.body.classList.remove('mobile-sheet-open');
+        positionMapKey();
+        return;
+    }
+    const footerHeight = Math.ceil(document.getElementById('bottom-bar').getBoundingClientRect().height);
+    root.style.setProperty('--mobile-footer-offset', footerHeight + 'px');
+    const sheets = ['quake-sidebar', 'regions-panel'].map(id => document.getElementById(id))
+        .filter(element => element.getClientRects().length);
+    document.body.classList.toggle('mobile-sheet-open', sheets.length > 0);
+    const replay = document.getElementById('timeline-panel');
+    const overlays = [...sheets];
+    if (!sheets.length && replay.classList.contains('visible')) overlays.push(replay);
+    const bottom = Math.max(footerHeight, ...overlays.map(element =>
+        Math.ceil(window.innerHeight - element.getBoundingClientRect().top + 8)));
+    root.style.setProperty('--mobile-map-bottom', bottom + 'px');
+    positionMapKey();
+    positionRegionPopup();
+    scheduleRegionMapLabels();
 }
 
 // EEW panel
@@ -3439,6 +3472,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const panelResize = new ResizeObserver(positionObsPanel);
     for (const id of ['eew-panel', 'obs-panel', 'regions-entry', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
     window.addEventListener('resize', positionObsPanel);
+    const mobileOverlayResize = new ResizeObserver(() => requestAnimationFrame(updateMobilePanelOffsets));
+    for (const id of ['bottom-bar', 'timeline-panel', 'quake-sidebar', 'regions-panel']) mobileOverlayResize.observe(document.getElementById(id));
+    window.addEventListener('resize', updateMobilePanelOffsets);
+    updateMobilePanelOffsets();
     const labelResize = new ResizeObserver(scheduleRegionMapLabels);
     for (const element of document.querySelectorAll('#settings-popup,#timeline-panel,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control')) labelResize.observe(element);
     document.getElementById('quake-sidebar').addEventListener('transitionend', scheduleRegionMapLabels);
@@ -3567,6 +3604,7 @@ function toggleQuakeSidebar() {
     if (!quakeSidebarCollapsed && mobileHistoryLayout.matches) setHistoryExpanded(false);
     updateQuakeSidebarState();
     if (!quakeSidebarCollapsed && mobileHistoryLayout.matches) document.getElementById('history-expand-btn').focus();
+    updateMobilePanelOffsets();
     positionRegionPopup();
     scheduleRegionMapLabels();
 }
@@ -4584,16 +4622,35 @@ function openTimelinePanel() {
     if (hideTimelineFeature) return;
     if (window.innerWidth <= 650 && mobileRegionsOpen) setRegionSheetOpen(false);
     collapseSidebarOnMobile();
+    closeBarMenus();
+    if (!timelinePanelOpen) setTimelineDetails(false);
     timelinePanelOpen = true;
     document.getElementById('timeline-panel').classList.add('visible');
     renderTimelineOverlays();
     if (!replayActive) enterReplay();
     else updateTimelineUI();
+    updateMobilePanelOffsets();
 }
 
 function closeTimelinePanel() {
     timelinePanelOpen = false;
     document.getElementById('timeline-panel').classList.remove('visible');
+    setTimelineDetails(false);
+    updateMobilePanelOffsets();
+}
+
+function setTimelineDetails(expanded) {
+    document.getElementById('timeline-panel').classList.toggle('timeline-expanded', expanded);
+    const button = document.getElementById('timeline-details-btn');
+    button.setAttribute('aria-expanded', String(expanded));
+    button.querySelector('.timeline-more-label').hidden = expanded;
+    button.querySelector('.timeline-less-label').hidden = !expanded;
+}
+
+function toggleTimelineDetails() {
+    const panel = document.getElementById('timeline-panel');
+    setTimelineDetails(!panel.classList.contains('timeline-expanded'));
+    updateMobilePanelOffsets();
 }
 
 function toggleTimelinePanel() {
@@ -4607,6 +4664,7 @@ function toggleTimelinePanel() {
 
 document.addEventListener('keydown', (e) => {
     if (!timelinePanelOpen) return;
+    if (window.innerWidth <= 650 && document.body.classList.contains('mobile-sheet-open')) return;
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.key === 'ArrowLeft') {

@@ -290,8 +290,8 @@
 <div id="timeline-panel">
     <button id="timeline-close" onclick="toggleTimelinePanel()" aria-label="Close">✕</button>
     <div id="timeline-row-top">
-        <button class="bar-btn" onclick="stepReplay(-3600)">−1h</button>
-        <button class="bar-btn" onclick="stepReplay(-600)">−10m</button>
+        <button class="bar-btn timeline-extra-jump" onclick="stepReplay(-3600)">−1h</button>
+        <button class="bar-btn timeline-extra-jump" onclick="stepReplay(-600)">−10m</button>
         <button class="bar-btn" onclick="stepReplay(-60)">−1m</button>
         <button class="bar-btn" id="timeline-playpause" onclick="onTimelinePlayPause()" aria-label="Play">
             <svg id="timeline-playpause-svg" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
@@ -303,9 +303,10 @@
             </svg>
         </button>
         <button class="bar-btn" onclick="stepReplay(60)">+1m</button>
-        <button class="bar-btn" onclick="stepReplay(600)">+10m</button>
-        <button class="bar-btn" onclick="stepReplay(3600)">+1h</button>
+        <button class="bar-btn timeline-extra-jump" onclick="stepReplay(600)">+10m</button>
+        <button class="bar-btn timeline-extra-jump" onclick="stepReplay(3600)">+1h</button>
         <button class="bar-btn" id="timeline-live-btn" onclick="exitReplay()"><span class="en">Live</span><span class="ja">ライブ</span><span class="zh">即時</span></button>
+        <button class="bar-btn" id="timeline-details-btn" type="button" onclick="toggleTimelineDetails()" aria-expanded="false" aria-controls="timeline-row-top"><span class="timeline-more-label"><span class="en">More</span><span class="ja">詳細</span><span class="zh">更多</span></span><span class="timeline-less-label" hidden><span class="en">Less</span><span class="ja">閉じる</span><span class="zh">收起</span></span></button>
     </div>
     <div id="timeline-track">
         <div id="timeline-gap-layer"></div>
