@@ -307,7 +307,7 @@ let muteTsunamiAdvisory = false;
 
 function toggleSettings() {
     closeBarMenus();
-    if (window.innerWidth <= 650 && !document.getElementById('settings-popup').classList.contains('visible')) {
+    if (window.innerWidth <= 750 && !document.getElementById('settings-popup').classList.contains('visible')) {
         if (mobileRegionsOpen) setRegionSheetOpen(false);
         collapseSidebarOnMobile();
     }
@@ -454,7 +454,7 @@ function formatPga(gal) {
 
 // Map init
 const DEFAULT_CENTER = [38.5, 138.5];
-const DEFAULT_ZOOM   = (window.innerWidth < window.innerHeight && window.innerWidth < 600) ? 5 : 6;
+const DEFAULT_ZOOM   = (window.innerWidth < window.innerHeight && window.innerWidth <= 750) ? 5 : 6;
 const QUAKE_ZOOM     = 7;
 const RYUKYU_CENTER  = [26.5, 128.0];
 const RYUKYU_ZOOM    = 7;
@@ -1373,7 +1373,7 @@ function updateRegionSelectedRows() {
 }
 
 function toggleRegionPanel() {
-    if (window.matchMedia('(max-width: 650px)').matches) {
+    if (window.matchMedia('(max-width: 750px)').matches) {
         setRegionSheetOpen(false);
         return;
     }
@@ -1385,7 +1385,7 @@ function toggleRegionPanel() {
 }
 
 function updateRegionPanelState() {
-    const mobile = window.matchMedia('(max-width: 650px)').matches;
+    const mobile = window.matchMedia('(max-width: 750px)').matches;
     const panel = document.getElementById('regions-panel');
     const entry = document.getElementById('regions-entry');
     const visible = regionRows.length > 0;
@@ -1478,10 +1478,10 @@ function renderSelectedRegion() {
 
 function regionMapSpace() {
     const size = map.getSize();
-    const panels = ['eew-panel', 'obs-panel', window.innerWidth <= 650 ? 'regions-entry' : 'regions-panel', 'tsunami-panel'].map(id => document.getElementById(id))
+    const panels = ['eew-panel', 'obs-panel', window.innerWidth <= 750 ? 'regions-entry' : 'regions-panel', 'tsunami-panel'].map(id => document.getElementById(id))
         .filter(element => element.getClientRects().length).map(element => element.getBoundingClientRect());
-    const mobile = size.x < 800;
-    const historySheetOpen = window.innerWidth <= 650 && !quakeSidebarCollapsed;
+    const mobile = size.x <= 750;
+    const historySheetOpen = window.innerWidth <= 750 && !quakeSidebarCollapsed;
     const right = size.x - (!quakeSidebarCollapsed && !historySheetOpen ? Math.min(258, size.x - 120) : 0) - 12;
     let left = mobile ? 12 : Math.max(12, ...panels.map(rect => rect.right + 12));
     const top = mobile ? Math.max(12, ...panels.map(rect => rect.bottom + 12)) : 12;
@@ -1489,7 +1489,7 @@ function regionMapSpace() {
     let bottom = timeline.classList.contains('visible') && getComputedStyle(timeline).visibility !== 'hidden'
         ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
     if (historySheetOpen) bottom = Math.min(bottom, document.getElementById('quake-sidebar').getBoundingClientRect().top - 12);
-    if (window.innerWidth <= 650 && mobileRegionsOpen) bottom = Math.min(bottom, document.getElementById('regions-panel').getBoundingClientRect().top - 12);
+    if (window.innerWidth <= 750 && mobileRegionsOpen) bottom = Math.min(bottom, document.getElementById('regions-panel').getBoundingClientRect().top - 12);
     const zoom = document.querySelector('.leaflet-control-zoom');
     if (zoom) bottom = Math.min(bottom, zoom.getBoundingClientRect().top - 12);
     const key = document.getElementById('map-key');
@@ -1501,7 +1501,7 @@ function regionMapSpace() {
 
 function locateRegion(code) {
     collapseSidebarOnMobile();
-    if (window.innerWidth <= 650) setRegionSheetOpen(false);
+    if (window.innerWidth <= 750) setRegionSheetOpen(false);
     selectRegion(code);
     const layer = regionLayersByCode.get(code);
     if (!layer || selectedRegionCode !== code) return;
@@ -3198,7 +3198,7 @@ function positionTsunamiPanel() {
     const panel = document.getElementById('tsunami-panel');
     if (panel.classList.contains('visible')) {
         const regionsEl = document.getElementById('regions-panel');
-        const anchor = window.innerWidth <= 650 ? document.getElementById('regions-entry') : regionsEl;
+        const anchor = window.innerWidth <= 750 ? document.getElementById('regions-entry') : regionsEl;
         const bottom = !anchor.hidden ? anchor.getBoundingClientRect().bottom : summaryPanelsBottom();
         panel.style.top = (bottom + 6) + 'px';
         panel.style.left = '10px';
@@ -3211,7 +3211,7 @@ function positionTsunamiPanel() {
 function positionRegionsPanel() {
     const panel = document.getElementById('regions-panel');
     const entry = document.getElementById('regions-entry');
-    if (window.innerWidth <= 650) {
+    if (window.innerWidth <= 750) {
         entry.style.top = (summaryPanelsBottom() + 6) + 'px';
         panel.style.top = '';
         panel.style.maxHeight = '';
@@ -3221,7 +3221,7 @@ function positionRegionsPanel() {
     const top = summaryPanelsBottom() + 6;
     const tsunami = document.getElementById('tsunami-panel');
     const tsunamiHeight = tsunami.classList.contains('visible') ? tsunami.offsetHeight + 6 : 0;
-    const bottomReserve = window.innerWidth <= 650 ? 90 : 50;
+    const bottomReserve = window.innerWidth <= 750 ? 90 : 50;
     const key = document.getElementById('map-key');
     const bottom = key.classList.contains('visible')
         ? Math.min(window.innerHeight - bottomReserve, key.getBoundingClientRect().bottom - 80)
@@ -3233,17 +3233,17 @@ function positionRegionsPanel() {
 function positionMapKey() {
     const key = document.getElementById('map-key');
     if (!key.classList.contains('visible')) return;
-    const bottom = Math.max(...['eew-panel', 'obs-panel', window.innerWidth <= 650 ? 'regions-entry' : 'regions-panel', 'tsunami-panel']
+    const bottom = Math.max(...['eew-panel', 'obs-panel', window.innerWidth <= 750 ? 'regions-entry' : 'regions-panel', 'tsunami-panel']
         .map(id => document.getElementById(id)).filter(element => element.getClientRects().length)
         .map(element => element.getBoundingClientRect().bottom));
     const available = key.getBoundingClientRect().bottom - bottom - 8;
-    key.style.visibility = window.innerWidth <= 650 && available < 40 ? 'hidden' : '';
+    key.style.visibility = window.innerWidth <= 750 && available < 40 ? 'hidden' : '';
     key.style.maxHeight = Math.max(40, available) + 'px';
 }
 
 function updateMobilePanelOffsets() {
     const root = document.documentElement;
-    if (window.innerWidth > 650) {
+    if (window.innerWidth > 750) {
         root.style.removeProperty('--mobile-footer-offset');
         root.style.removeProperty('--mobile-map-bottom');
         document.body.classList.remove('mobile-sheet-open');
@@ -3409,7 +3409,7 @@ function positionObsPanel() {
     const eewEl = document.getElementById('eew-panel');
     const obsEl = document.getElementById('obs-panel');
     const rect  = eewEl.getBoundingClientRect();
-    const mobile = window.matchMedia('(max-width: 650px)').matches;
+    const mobile = window.matchMedia('(max-width: 750px)').matches;
     obsEl.style.top = (mobile ? rect.top : rect.bottom + 6) + 'px';
     obsEl.style.left = mobile ? '' : '10px';
     positionTsunamiPanel();
@@ -3580,7 +3580,7 @@ function createWebSocket() {
 createWebSocket();
 
 // Earthquake history sidebar
-const mobileHistoryLayout = window.matchMedia('(max-width: 650px)');
+const mobileHistoryLayout = window.matchMedia('(max-width: 750px)');
 let quakeSidebarCollapsed = mobileHistoryLayout.matches;
 updateQuakeSidebarState();
 
@@ -4620,7 +4620,7 @@ function setHideTimelineFeature(checked) {
 
 function openTimelinePanel() {
     if (hideTimelineFeature) return;
-    if (window.innerWidth <= 650 && mobileRegionsOpen) setRegionSheetOpen(false);
+    if (window.innerWidth <= 750 && mobileRegionsOpen) setRegionSheetOpen(false);
     collapseSidebarOnMobile();
     closeBarMenus();
     if (!timelinePanelOpen) setTimelineDetails(false);
@@ -4664,7 +4664,7 @@ function toggleTimelinePanel() {
 
 document.addEventListener('keydown', (e) => {
     if (!timelinePanelOpen) return;
-    if (window.innerWidth <= 650 && document.body.classList.contains('mobile-sheet-open')) return;
+    if (window.innerWidth <= 750 && document.body.classList.contains('mobile-sheet-open')) return;
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.key === 'ArrowLeft') {

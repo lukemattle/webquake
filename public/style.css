@@ -205,7 +205,7 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 }
 .quake-replay-btn:hover { background: rgba(74,158,255,0.18); color: #4a9eff; }
 .quake-replay-btn:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
-@media (max-width: 650px) {
+@media (max-width: 750px) {
     #eew-panel, body.has-regions #eew-panel {
         width: calc((100vw - 28px) * 0.66); min-width: 0; max-width: none;
         max-height: min(320px, 40dvh); overflow-y: auto;
@@ -560,14 +560,14 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     #timeline-panel { width: min(900px, calc(100vw - 48px)); }
 }
 
-@media (max-width: 650px) {
+@media (max-width: 750px) {
     #timeline-panel { padding: 8px 10px 10px; gap: 6px; }
     #timeline-row-top { gap: 3px; }
     #timeline-row-top .bar-btn { padding: 3px 6px; font-size: 0.8em; }
 }
 
 /* Keep footer offsets after the base panel rules. */
-@media (max-width: 650px) {
+@media (max-width: 750px) {
     :root {
         --mobile-footer-height: calc(48px + env(safe-area-inset-bottom, 0px));
         --mobile-footer-offset: var(--mobile-footer-height);
