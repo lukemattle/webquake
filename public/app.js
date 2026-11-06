@@ -339,6 +339,7 @@ document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     for (const name of ['language', 'links']) {
         if (!document.getElementById(name + '-menu').hidden) {
+            event.preventDefault();
             closeBarMenus();
             document.getElementById(name + '-btn').focus();
             break;
@@ -1442,11 +1443,13 @@ function regionMapSpace() {
     const panels = ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel'].map(id => document.getElementById(id))
         .filter(element => element.getClientRects().length).map(element => element.getBoundingClientRect());
     const mobile = size.x < 800;
-    const right = size.x - (!quakeSidebarCollapsed ? Math.min(258, size.x - 120) : 0) - 12;
+    const historySheetOpen = window.innerWidth <= 650 && !quakeSidebarCollapsed;
+    const right = size.x - (!quakeSidebarCollapsed && !historySheetOpen ? Math.min(258, size.x - 120) : 0) - 12;
     let left = mobile ? 12 : Math.max(12, ...panels.map(rect => rect.right + 12));
     const top = mobile ? Math.max(12, ...panels.map(rect => rect.bottom + 12)) : 12;
     const timeline = document.getElementById('timeline-panel');
     let bottom = timeline.classList.contains('visible') ? timeline.getBoundingClientRect().top - 12 : size.y - (mobile ? 90 : 50);
+    if (historySheetOpen) bottom = Math.min(bottom, document.getElementById('quake-sidebar').getBoundingClientRect().top - 12);
     const zoom = document.querySelector('.leaflet-control-zoom');
     if (zoom) bottom = Math.min(bottom, zoom.getBoundingClientRect().top - 12);
     const key = document.getElementById('map-key');
@@ -3497,34 +3500,64 @@ function createWebSocket() {
 createWebSocket();
 
 // Earthquake history sidebar
-let quakeSidebarCollapsed = window.innerWidth <= 600;
-document.getElementById('history-btn').setAttribute('aria-expanded', String(!quakeSidebarCollapsed));
-if (quakeSidebarCollapsed) {
-    document.getElementById('quake-sidebar').classList.add('collapsed');
+const mobileHistoryLayout = window.matchMedia('(max-width: 650px)');
+let quakeSidebarCollapsed = mobileHistoryLayout.matches;
+updateQuakeSidebarState();
+
+function updateQuakeSidebarState() {
+    document.getElementById('history-btn').setAttribute('aria-expanded', String(!quakeSidebarCollapsed));
+    const sb  = document.getElementById('quake-sidebar');
     const btn = document.getElementById('quake-sidebar-toggle');
-    btn.classList.add('sidebar-collapsed');
-    btn.textContent = '◀';
+    if (quakeSidebarCollapsed && sb.contains(document.activeElement)) document.getElementById('history-btn').focus();
+    sb.inert = quakeSidebarCollapsed;
+    sb.classList.toggle('collapsed', quakeSidebarCollapsed);
+    btn.classList.toggle('sidebar-collapsed', quakeSidebarCollapsed);
+    btn.textContent = quakeSidebarCollapsed ? '◀' : '▶';
+    const leafletRight = document.querySelector('.leaflet-bottom.leaflet-right');
+    if (leafletRight) leafletRight.style.right = quakeSidebarCollapsed || mobileHistoryLayout.matches ? '0' : '262px';
 }
 
 function toggleQuakeSidebar() {
     closeBarMenus();
     quakeSidebarCollapsed = !quakeSidebarCollapsed;
-    document.getElementById('history-btn').setAttribute('aria-expanded', String(!quakeSidebarCollapsed));
-    const sb  = document.getElementById('quake-sidebar');
-    const btn = document.getElementById('quake-sidebar-toggle');
-    sb.classList.toggle('collapsed', quakeSidebarCollapsed);
-    btn.classList.toggle('sidebar-collapsed', quakeSidebarCollapsed);
-    btn.textContent = quakeSidebarCollapsed ? '◀' : '▶';
-    const leafletRight = document.querySelector('.leaflet-bottom.leaflet-right');
-    if (leafletRight) leafletRight.style.right = quakeSidebarCollapsed ? '0' : '262px';
+    if (!quakeSidebarCollapsed && mobileHistoryLayout.matches) setHistoryExpanded(false);
+    updateQuakeSidebarState();
+    if (!quakeSidebarCollapsed && mobileHistoryLayout.matches) document.getElementById('history-expand-btn').focus();
     positionRegionPopup();
     scheduleRegionMapLabels();
 }
 
+function setHistoryExpanded(expanded) {
+    document.getElementById('quake-sidebar').classList.toggle('history-expanded', expanded);
+    const button = document.getElementById('history-expand-btn');
+    button.setAttribute('aria-expanded', String(expanded));
+    button.querySelector('.history-expand-label').hidden = expanded;
+    button.querySelector('.history-shrink-label').hidden = !expanded;
+}
+
+function toggleHistoryExpanded() {
+    const sidebar = document.getElementById('quake-sidebar');
+    setHistoryExpanded(!sidebar.classList.contains('history-expanded'));
+}
+
+mobileHistoryLayout.addEventListener('change', () => {
+    if (mobileHistoryLayout.matches) quakeSidebarCollapsed = true;
+    setHistoryExpanded(false);
+    updateQuakeSidebarState();
+    positionRegionPopup();
+    scheduleRegionMapLabels();
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !event.defaultPrevented && mobileHistoryLayout.matches && !quakeSidebarCollapsed) {
+        event.preventDefault();
+        toggleQuakeSidebar();
+    }
+});
+
 // Collapses the quake history sidebar after a map/replay action on mobile,
 // where it overlays the map and would otherwise block the view.
 function collapseSidebarOnMobile() {
-    if (window.innerWidth <= 600 && !quakeSidebarCollapsed) toggleQuakeSidebar();
+    if (mobileHistoryLayout.matches && !quakeSidebarCollapsed) toggleQuakeSidebar();
 }
 
 function parseQuakeDepth(cod) {
@@ -4486,6 +4519,7 @@ function setHideTimelineFeature(checked) {
 
 function openTimelinePanel() {
     if (hideTimelineFeature) return;
+    collapseSidebarOnMobile();
     timelinePanelOpen = true;
     document.getElementById('timeline-panel').classList.add('visible');
     renderTimelineOverlays();

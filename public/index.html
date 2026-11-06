@@ -179,6 +179,10 @@
             <button type="button" class="lang-seg-btn" id="sb-filter-jp" onclick="setSidebarFilter('jp')" title="Japan only">JP</button>
             <button type="button" class="lang-seg-btn" id="sb-filter-tw" onclick="setSidebarFilter('tw')" title="Taiwan only">TW</button>
         </span>
+        <span class="history-sheet-controls">
+            <button type="button" id="history-expand-btn" class="bar-btn" onclick="toggleHistoryExpanded()" aria-expanded="false" aria-controls="quake-sidebar-list"><span class="history-expand-label"><span class="en">Expand</span><span class="ja">拡大</span><span class="zh">展開</span></span><span class="history-shrink-label" hidden><span class="en">Reduce</span><span class="ja">縮小</span><span class="zh">縮小</span></span></button>
+            <button type="button" class="bar-btn" onclick="toggleQuakeSidebar()" aria-label="Close earthquake history">✕</button>
+        </span>
     </div>
     <div id="quake-sidebar-list"></div>
 </div>
