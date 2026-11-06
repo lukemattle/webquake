@@ -292,23 +292,6 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 .bar-menu-popup [aria-pressed="true"] { background: #333; }
 .bar-menu-popup :focus-visible { outline: 2px solid #4a9eff; }
 
-@media (max-width: 650px) {
-    #bottom-bar {
-        min-height: calc(60px + env(safe-area-inset-bottom, 0px));
-        padding: 8px max(8px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
-        gap: 4px; font-size: 0.82em;
-    }
-    #bottom-bar > .bar-btn, #bottom-bar .bar-menu > .bar-btn {
-        height: 44px; min-width: 44px; padding: 0 8px; font-size: 0.9em;
-        flex-shrink: 0;
-    }
-    #connection-status { width: 12px; height: 12px; padding: 0; flex-shrink: 0; border-radius: 50%; font-size: 0; }
-    #jst-time, #bottom-title, #quake-sidebar-toggle { display: none; }
-    #quake-sidebar { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
-    .leaflet-bottom { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
-    #settings-popup, #timeline-panel, #map-key { bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
-    #settings-popup { max-height: calc(100dvh - 88px - env(safe-area-inset-bottom, 0px)); }
-}
 
 /* ── Settings popup ── */
 #settings-popup {
@@ -561,5 +544,24 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
     #timeline-panel { padding: 8px 10px 10px; gap: 6px; }
     #timeline-row-top { gap: 3px; }
     #timeline-row-top .bar-btn { padding: 3px 6px; font-size: 0.8em; }
-    #map-key { bottom: calc(78px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Keep footer offsets after the base panel rules. */
+@media (max-width: 650px) {
+    :root { --mobile-footer-height: calc(48px + env(safe-area-inset-bottom, 0px)); }
+    #bottom-bar {
+        height: var(--mobile-footer-height);
+        padding: 6px max(8px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+        gap: 4px; font-size: 0.82em;
+    }
+    #bottom-bar > .bar-btn, #bottom-bar .bar-menu > .bar-btn {
+        height: 36px; min-width: 36px; padding: 0 8px; font-size: 0.9em;
+        flex-shrink: 0;
+    }
+    #connection-status { width: 12px; height: 12px; padding: 0; flex-shrink: 0; border-radius: 50%; font-size: 0; }
+    #jst-time, #bottom-title, #quake-sidebar-toggle { display: none; }
+    #quake-sidebar { bottom: var(--mobile-footer-height); }
+    .leaflet-bottom { bottom: var(--mobile-footer-height); }
+    #settings-popup, #timeline-panel, #map-key { bottom: calc(var(--mobile-footer-height) + 8px); }
+    #settings-popup { max-height: calc(100dvh - var(--mobile-footer-height) - 28px); }
 }
