@@ -3104,15 +3104,21 @@ function renderTsunamiCard() {
     updateMapKey();
 }
 
+// Mobile summary cards share a row, so following panels must clear both.
+function summaryPanelsBottom() {
+    const eew = document.getElementById('eew-panel');
+    const obs = document.getElementById('obs-panel');
+    return Math.max(eew.getBoundingClientRect().bottom,
+        obs.classList.contains('visible') ? obs.getBoundingClientRect().bottom : 0);
+}
+
 function positionTsunamiPanel() {
     positionRegionsPanel();
     const panel = document.getElementById('tsunami-panel');
     if (panel.classList.contains('visible')) {
         const regionsEl = document.getElementById('regions-panel');
-        const obsEl = document.getElementById('obs-panel');
-        const eewEl = document.getElementById('eew-panel');
-        const anchor = !regionsEl.hidden ? regionsEl : obsEl.classList.contains('visible') ? obsEl : eewEl;
-        panel.style.top = (anchor.getBoundingClientRect().bottom + 6) + 'px';
+        const bottom = !regionsEl.hidden ? regionsEl.getBoundingClientRect().bottom : summaryPanelsBottom();
+        panel.style.top = (bottom + 6) + 'px';
         panel.style.left = '10px';
     }
     positionMapKey();
@@ -3123,9 +3129,7 @@ function positionTsunamiPanel() {
 function positionRegionsPanel() {
     const panel = document.getElementById('regions-panel');
     if (panel.hidden) return;
-    const obs = document.getElementById('obs-panel');
-    const anchor = obs.classList.contains('visible') ? obs : document.getElementById('eew-panel');
-    const top = anchor.getBoundingClientRect().bottom + 6;
+    const top = summaryPanelsBottom() + 6;
     const tsunami = document.getElementById('tsunami-panel');
     const tsunamiHeight = tsunami.classList.contains('visible') ? tsunami.offsetHeight + 6 : 0;
     const bottomReserve = window.innerWidth <= 650 ? 90 : 50;
@@ -3289,8 +3293,9 @@ function positionObsPanel() {
     const eewEl = document.getElementById('eew-panel');
     const obsEl = document.getElementById('obs-panel');
     const rect  = eewEl.getBoundingClientRect();
-    obsEl.style.top  = (rect.bottom + 6) + 'px';
-    obsEl.style.left = '10px';
+    const mobile = window.matchMedia('(max-width: 650px)').matches;
+    obsEl.style.top = (mobile ? rect.top : rect.bottom + 6) + 'px';
+    obsEl.style.left = mobile ? '' : '10px';
     positionTsunamiPanel();
 }
 
@@ -3346,6 +3351,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!_timelineRefreshTimer) _timelineRefreshTimer = setInterval(loadTimelineMarkersAndGaps, 300000);
     const panelResize = new ResizeObserver(positionObsPanel);
     for (const id of ['eew-panel', 'obs-panel', 'regions-panel', 'tsunami-panel']) panelResize.observe(document.getElementById(id));
+    window.addEventListener('resize', positionObsPanel);
     const labelResize = new ResizeObserver(scheduleRegionMapLabels);
     for (const element of document.querySelectorAll('#settings-popup,#timeline-panel,#station-popup,#tw-quake-popup,#region-popup,.leaflet-control')) labelResize.observe(element);
     document.getElementById('quake-sidebar').addEventListener('transitionend', scheduleRegionMapLabels);

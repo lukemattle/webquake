@@ -202,6 +202,21 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 .quake-replay-btn:hover { background: rgba(74,158,255,0.18); color: #4a9eff; }
 .quake-replay-btn:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
 @media (max-width: 650px) {
+    #eew-panel, body.has-regions #eew-panel {
+        width: calc((100vw - 28px) * 0.66); min-width: 0; max-width: none;
+        max-height: min(320px, 40dvh); overflow-y: auto;
+        overscroll-behavior: contain; pointer-events: auto;
+        padding: 10px;
+    }
+    #eew-panel .eew-location, #eew-panel .eew-type,
+    #eew-panel .eew-detail, #eew-panel .eew-time { overflow-wrap: anywhere; }
+    #obs-panel {
+        left: auto; right: 10px; width: calc((100vw - 28px) * 0.34);
+        max-height: min(320px, 40dvh); overflow-y: auto;
+        overscroll-behavior: contain; pointer-events: auto;
+        overflow-wrap: anywhere;
+    }
+    #obs-panel .obs-box { padding: 8px; margin-top: 0; }
     #quake-sidebar { width: 258px; }
     #quake-sidebar.collapsed { width: 0; }
     .leaflet-bottom.leaflet-right { right: 0 !important; }
