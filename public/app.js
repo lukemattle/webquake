@@ -3606,6 +3606,17 @@ document.addEventListener('keydown', event => {
     }
 });
 
+// Capture outside clicks before Leaflet or other controls stop propagation.
+document.addEventListener('click', event => {
+    if (!mobileHistoryLayout.matches) return;
+    if (mobileRegionsOpen && !event.target.closest('#regions-panel, #regions-entry')) {
+        setRegionSheetOpen(false);
+    }
+    if (!quakeSidebarCollapsed && !event.target.closest('#quake-sidebar, #history-btn')) {
+        toggleQuakeSidebar();
+    }
+}, true);
+
 // Collapses the quake history sidebar after a map/replay action on mobile,
 // where it overlays the map and would otherwise block the view.
 function collapseSidebarOnMobile() {
