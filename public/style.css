@@ -104,7 +104,7 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 .region-map-label .region-intensity { min-width: 22px; padding: 0 3px; font-size: 11px; }
 
 #bottom-bar {
-    position: absolute; bottom: 0; left: 0; right: 0; z-index: 1003;
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
     background: rgba(0,0,0,0.75); padding: 6px 12px;
     display: flex; align-items: center; gap: 10px;
     color: #fff; font-size: 0.82em; position: absolute;
@@ -274,6 +274,9 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 }
 #jst-time { color: #ddd; }
 #links-control { margin-left: auto; }
+#discord-btn { margin-left: auto; }
+#x-btn, #github-btn { margin-left: 4px; }
+#bottom-bar > .mobile-footer-control { display: none; }
 #bottom-title { position: absolute; left: 50%; transform: translateX(-50%); font-size: 0.95em; color: #aaa; pointer-events: none; }
 #bottom-version { color: #666; }
 .bar-btn {
@@ -563,6 +566,7 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
 @media (max-width: 650px) {
     :root { --mobile-footer-height: calc(48px + env(safe-area-inset-bottom, 0px)); }
     #bottom-bar {
+        z-index: 1003;
         height: var(--mobile-footer-height);
         padding: 6px max(8px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
         gap: 4px; font-size: 0.82em;
@@ -572,6 +576,8 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
         flex-shrink: 0;
     }
     #connection-status { width: 12px; height: 12px; padding: 0; flex-shrink: 0; border-radius: 50%; font-size: 0; }
+    #bottom-bar > .desktop-footer-control { display: none; }
+    #bottom-bar > .mobile-footer-control { display: inline-flex; }
     #jst-time, #quake-sidebar-toggle { display: none; }
     #bottom-title {
         position: static; transform: none; display: flex; flex-direction: column;

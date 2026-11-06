@@ -3541,6 +3541,7 @@ function toggleHistoryExpanded() {
 }
 
 mobileHistoryLayout.addEventListener('change', () => {
+    closeBarMenus();
     if (mobileHistoryLayout.matches) quakeSidebarCollapsed = true;
     setHistoryExpanded(false);
     updateQuakeSidebarState();
