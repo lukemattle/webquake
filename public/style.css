@@ -220,13 +220,6 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
     #quake-sidebar { width: 258px; }
     #quake-sidebar.collapsed { width: 0; }
     .leaflet-bottom.leaflet-right { right: 0 !important; }
-    #bottom-title {
-        position: fixed !important; left: 10px !important; right: auto !important; bottom: 40px !important;
-        transform: none !important; font-size: 0.75em; color: #666;
-        background: rgba(0,0,0,0.55); padding: 2px 6px; border-radius: 3px;
-        pointer-events: none; z-index: 999;
-        text-size-adjust: 100%; -webkit-text-size-adjust: 100%;
-    }
     #bottom-bar { gap: 5px; padding: 5px 8px; font-size: 0.74em; }
     .bar-btn, #connection-status { height: 20px; padding: 0 6px; font-size: 0.85em; }
 }
@@ -555,11 +548,18 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
         gap: 4px; font-size: 0.82em;
     }
     #bottom-bar > .bar-btn, #bottom-bar .bar-menu > .bar-btn {
-        height: 36px; min-width: 36px; padding: 0 8px; font-size: 0.9em;
+        height: 36px; min-width: 36px; padding: 0 6px; font-size: 0.9em;
         flex-shrink: 0;
     }
     #connection-status { width: 12px; height: 12px; padding: 0; flex-shrink: 0; border-radius: 50%; font-size: 0; }
-    #jst-time, #bottom-title, #quake-sidebar-toggle { display: none; }
+    #jst-time, #quake-sidebar-toggle { display: none; }
+    #bottom-title {
+        position: static; transform: none; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; flex: 1; min-width: 0;
+        font-size: 12px; font-weight: 600; line-height: 1.3; white-space: nowrap; color: #ccc;
+    }
+    #bottom-version { font-size: 11px; font-weight: 400; color: #aaa; }
+    #links-control { margin-left: 0; }
     #quake-sidebar { bottom: var(--mobile-footer-height); }
     .leaflet-bottom { bottom: var(--mobile-footer-height); }
     #settings-popup, #timeline-panel, #map-key { bottom: calc(var(--mobile-footer-height) + 8px); }
