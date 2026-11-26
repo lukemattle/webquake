@@ -1392,7 +1392,7 @@ function updateRegionPanelState() {
     entry.hidden = !mobile || !visible;
     const hidden = !visible || (mobile && !mobileRegionsOpen);
     if (hidden && panel.contains(document.activeElement)) {
-        (entry.hidden ? document.getElementById('history-btn') : entry).focus();
+        (entry.hidden ? document.getElementById('history-btn') : entry).focus({preventScroll: true});
     }
     panel.hidden = hidden;
     entry.setAttribute('aria-expanded', String(mobile && mobileRegionsOpen && visible));
@@ -1409,7 +1409,7 @@ function setRegionSheetOpen(open) {
     }
     updateRegionPanelState();
     positionObsPanel();
-    if (mobileRegionsOpen) document.getElementById('regions-close').focus();
+    if (mobileRegionsOpen) document.getElementById('regions-close').focus({preventScroll: true});
     updateMobilePanelOffsets();
 }
 
