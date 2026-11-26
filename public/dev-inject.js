@@ -127,8 +127,8 @@ window.testNiedGradient = function() {
 };
 
 // Six close neighbours: testNiedSpatial(0) rejects the lone 7;
-// testNiedSpatial(2) still rejects it; testNiedSpatial(3) accepts it.
-// testNiedSpatial(3, '2') checks that the current maximum falls immediately.
+// testNiedSpatial(1) accepts it with one confirming station.
+// testNiedSpatial(1, '2') checks that the current maximum falls immediately.
 window.testNiedSpatial = function(supporters = 0, intensity = '7') {
     const stations = [{code: 'spatial-target', lat: 35.7, lon: 139.7, int: intensity, raw: null}];
     for (let i = 0; i < 6; i++) {
@@ -159,11 +159,10 @@ window.testNiedSpatialFilter = function() {
         }))
     ];
     const hasTarget = result => result.acceptedStations.some(st => st.code === 'target');
-    const requirements = [null, 1, 1, 2, 2, 3, 3];
     for (let count = 0; count <= 6; count++) {
         for (let supporters = 0; supporters <= count; supporters++) {
             const result = new NiedSpatialFilter().evaluate(fixture(count, supporters));
-            const expected = count > 0 && supporters >= requirements[count];
+            const expected = supporters >= 1;
             check(hasTarget(result) === expected, `${supporters}/${count} supporters`);
         }
     }
@@ -177,16 +176,17 @@ window.testNiedSpatialFilter = function() {
     check(!hasTarget(new NiedSpatialFilter().evaluate(borehole)), 'borehole shaking cannot confirm surface shaking');
 
     const filter = new NiedSpatialFilter();
-    const full = fixture(6, 3);
+    const full = fixture(6, 1);
     check(hasTarget(filter.evaluate(full)), 'supported high reading is accepted');
     const cached = filter.neighbours.get('target');
     const falling = full.map(st => st.code === 'target' ? {...st, int: '2'} : st);
     const fallen = filter.evaluate(falling);
     check(hasTarget(fallen), 'a supported falling reading remains accepted');
     check(filter.neighbours.get('target') === cached, 'reading changes reuse cached neighbours');
-    const missing = full.slice(0, 3);
-    check(!hasTarget(filter.evaluate(missing)), 'missing readings do not lower the required support');
-    const missingIntensity = full.map(st => st.code === 'near-2' ? {...st, int: null} : st);
+    check(fallen.acceptedStations.length === 2, 'a pair remains accepted among six mostly quiet neighbours');
+    const missing = full.filter(st => st.code !== 'near-0');
+    check(!hasTarget(filter.evaluate(missing)), 'a missing confirming station provides no support');
+    const missingIntensity = full.map(st => st.code === 'near-0' ? {...st, int: null} : st);
     check(!hasTarget(filter.evaluate(missingIntensity)), 'missing intensity provides no support');
     const quiet = full.map(st => ({...st, int: '0'}));
     check(filter.evaluate(quiet).acceptedStations.length === 0, 'quiet readings clear accepted shaking');

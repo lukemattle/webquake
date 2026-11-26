@@ -1204,9 +1204,11 @@ class NiedSpatialFilter {
             }
             const neighbours = this.neighbours.get(key);
             if (!neighbours.length) continue;
-            // Missing readings count against support from the fixed neighbour set.
-            const supporters = neighbours.filter(otherKey => intRank(current.get(otherKey)?.int) >= 1).length;
-            if (supporters < Math.ceil(neighbours.length / 2)) continue;
+            // A small local quake may reach only a pair of stations. Require
+            // one confirming neighbour rather than half the nearby network;
+            // isolated spikes and missing readings still provide no support.
+            const supported = neighbours.some(otherKey => intRank(current.get(otherKey)?.int) >= 1);
+            if (!supported) continue;
             acceptedStations.push(station);
 
             if (!_regionFeatureBounds) continue;
