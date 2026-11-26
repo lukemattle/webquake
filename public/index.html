@@ -72,6 +72,7 @@
 <audio id="snd-new-quake"       src="/new_quake.mp3"      preload="auto"></audio>
 <audio id="snd-new-info"        src="/new_info.mp3"       preload="auto"></audio>
 <audio id="snd-new-report"      src="/new-report.mp3"     preload="auto"></audio>
+<audio id="snd-secondary-quake" src="/secondary_quake.mp3" preload="none"></audio>
 <audio id="snd-new-tsunami"     src="/new-tsunami.mp3"    preload="auto"></audio>
 <audio id="snd-tsunami-warning" src="/tsunami-warning.mp3" preload="auto"></audio>
 
@@ -241,6 +242,19 @@
         <span class="settings-label"><span class="en">Report</span><span class="ja">地震情報</span><span class="zh">地震資訊</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-report" checked onchange="muteReport=!this.checked"><span class="tog-track"></span></span>
     </label>
+    <label class="settings-row" for="sound-eew-threshold">
+        <span class="settings-label"><span class="en">EEW normal sound from</span><span class="ja">EEW通常音の最低震度</span><span class="zh">速報一般音效最低震度</span></span>
+        <select class="sound-select" id="sound-eew-threshold" onchange="setQuakeSoundSetting('eewThreshold', this.value)"></select>
+    </label>
+    <label class="settings-row" for="sound-report-threshold">
+        <span class="settings-label"><span class="en">Report normal sound from</span><span class="ja">地震情報の通常音の最低震度</span><span class="zh">地震資訊一般音效最低震度</span></span>
+        <select class="sound-select" id="sound-report-threshold" onchange="setQuakeSoundSetting('reportThreshold', this.value)"></select>
+    </label>
+    <label class="settings-row" for="sound-below-threshold">
+        <span class="settings-label"><span class="en">Below threshold</span><span class="ja">最低震度未満</span><span class="zh">低於最低震度</span></span>
+        <select class="sound-select" id="sound-below-threshold" onchange="setQuakeSoundSetting('belowThreshold', this.value)"><option value="silent">Silent</option><option value="secondary">Secondary sound</option></select>
+    </label>
+    <div class="settings-note sound-location-note"><span class="en">Uses your sound location’s regional intensity when available; otherwise the event maximum. Unknown intensity uses the normal sound. The sound switches above still apply. Preferences are saved in this browser.</span><span class="ja">通知地点の地域震度がある場合はその震度を、なければ最大震度を使用します。震度不明の場合は通常音です。上の音のスイッチも適用されます。設定はこのブラウザに保存されます。</span><span class="zh">有音效地點的區域震度時使用該震度，否則使用事件最大震度。震度不明時播放一般音效。上方音效開關仍有效。設定儲存於此瀏覽器。</span></div>
     <label class="settings-row">
         <span class="settings-label"><span class="en">Tsunami Warning</span><span class="ja">津波警報音</span><span class="zh">海嘯警報音</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-tsunami-warning" checked onchange="muteTsunamiWarning=!this.checked"><span class="tog-track"></span></span>

@@ -289,6 +289,7 @@ document.getElementById('bottom-version').textContent = '– ' + VERSION;
 const sndNewQuake       = document.getElementById('snd-new-quake');
 const sndNewInfo        = document.getElementById('snd-new-info');
 const sndNewReport      = document.getElementById('snd-new-report');
+const sndSecondaryQuake = document.getElementById('snd-secondary-quake');
 const sndNewTsunami     = document.getElementById('snd-new-tsunami');
 const sndTsunamiWarning = document.getElementById('snd-tsunami-warning');
 
@@ -304,6 +305,62 @@ let muteEewReport      = false;
 let muteReport         = false;
 let muteTsunamiWarning = false;
 let muteTsunamiAdvisory = false;
+
+const QUAKE_SOUND_SETTINGS_KEY = 'webquake_dev_quake_sound_settings';
+const SOUND_THRESHOLD_VALUES = ['all', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7'];
+let quakeSoundSettings = loadQuakeSoundSettings();
+
+function loadQuakeSoundSettings() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(QUAKE_SOUND_SETTINGS_KEY)); } catch (e) {}
+    return {
+        eewThreshold: SOUND_THRESHOLD_VALUES.includes(saved?.eewThreshold) ? saved.eewThreshold : 'all',
+        reportThreshold: SOUND_THRESHOLD_VALUES.includes(saved?.reportThreshold) ? saved.reportThreshold : 'all',
+        belowThreshold: saved?.belowThreshold === 'secondary' ? 'secondary' : 'silent'
+    };
+}
+
+function setQuakeSoundSetting(name, value) {
+    if (name === 'belowThreshold' ? !['silent', 'secondary'].includes(value) :
+        !['eewThreshold', 'reportThreshold'].includes(name) || !SOUND_THRESHOLD_VALUES.includes(value)) return;
+    quakeSoundSettings[name] = value;
+    try { localStorage.setItem(QUAKE_SOUND_SETTINGS_KEY, JSON.stringify(quakeSoundSettings)); } catch (e) {}
+}
+
+function updateQuakeSoundSettingsUI() {
+    for (const [id, name] of [['sound-eew-threshold', 'eewThreshold'], ['sound-report-threshold', 'reportThreshold']]) {
+        const select = document.getElementById(id);
+        select.replaceChildren(...SOUND_THRESHOLD_VALUES.map(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value === 'all' ? t('All intensities', 'すべての震度', '所有震度') : value;
+            return option;
+        }));
+        select.value = quakeSoundSettings[name];
+    }
+    const below = document.getElementById('sound-below-threshold');
+    below.options[0].textContent = t('Silent', '無音', '靜音');
+    below.options[1].textContent = t('Secondary sound', 'サブ音', '次要音效');
+    below.value = quakeSoundSettings.belowThreshold;
+}
+
+function quakeSoundIntensity(data) {
+    if (soundLocation && (data.area_intensities || []).length) {
+        const code = findRegionCodeForPoint(soundLocation.lat, soundLocation.lon);
+        return Math.max(-1, ...data.area_intensities
+            .filter(area => code != null && String(area.code) === String(code))
+            .map(area => intRank(area.max_int)));
+    }
+    return intRank(data.max_int);
+}
+
+function quakeSoundMode(data, threshold) {
+    const intensity = quakeSoundIntensity(data);
+    // An early report may not yet have an intensity estimate. Preserve its
+    // normal sound until a known intensity can be compared with the threshold.
+    if (threshold === 'all' || intensity < 0 || intensity >= intRank(threshold)) return 'normal';
+    return quakeSoundSettings.belowThreshold;
+}
 
 // Local to this browser; never sent to the server or used by rendering filters.
 const SOUND_LOCATION_KEY = 'webquake_dev_sound_location';
@@ -404,6 +461,14 @@ function withLocalizedQuakeSound(data, allowDistance, play) {
 
 function playEewSounds(data, key) {
     withLocalizedQuakeSound(data, true, () => {
+        const mode = quakeSoundMode(data, quakeSoundSettings.eewThreshold);
+        if (mode !== 'normal') {
+            if (mode === 'secondary' && (!muteEewReport || (!muteEewAlert && !seenSecondaryEewOrigins.has(key)))) {
+                seenSecondaryEewOrigins.add(key);
+                playSound(sndSecondaryQuake);
+            }
+            return;
+        }
         if (!seenEewOrigins.has(key)) {
             seenEewOrigins.add(key);
             if (!muteEewAlert) playSound(sndNewQuake);
@@ -412,11 +477,18 @@ function playEewSounds(data, key) {
     });
 }
 
-function playQuakeInfoSound(data, key, ts, fp) {
+function playQuakeInfoSound(data, key, ts, fp, suppress = false) {
     withLocalizedQuakeSound(data, false, () => {
+        const mode = quakeSoundMode(data, quakeSoundSettings.reportThreshold);
+        // Local intensity can cross the threshold without the event maximum
+        // changing, so include it in the shared live/history fingerprint.
+        fp = [fp, quakeSoundIntensity(data), mode].join('|');
         const matchKey = resolveQuakeSoundKey(key, ts);
         const prev = quakeInfoSoundState.get(matchKey);
-        if ((!prev || prev.fp !== fp) && !muteReport) playSound(sndNewInfo);
+        if ((!prev || prev.fp !== fp) && !muteReport && !suppress) {
+            if (mode === 'normal') playSound(sndNewInfo);
+            else if (mode === 'secondary') playSound(sndSecondaryQuake);
+        }
         quakeInfoSoundState.set(matchKey, { ts, fp });
     });
 }
@@ -742,6 +814,7 @@ const epicenterMarks = new Map();
 const activeEews     = new Map(); // key → EEW data object
 const activeTwEews   = new Map(); // Event key → Taiwan EEW; marker/wave keys use tw:*.
 const seenEewOrigins    = new Set(); // origin_times we've already sounded for
+const seenSecondaryEewOrigins = new Set(); // Does not consume the normal alert on escalation.
 // Canonical quake key → { ts, fp } of the last info sound.
 // Share this across live and JMA history sources to avoid duplicate chimes.
 const quakeInfoSoundState = new Map();
@@ -3573,6 +3646,7 @@ function t(en, ja, zh) {
 
 function setLanguage(lang) {
     currentLanguage = lang;
+    updateQuakeSoundSettingsUI();
     document.documentElement.lang = lang;
     document.getElementById('language-btn').textContent = lang.toUpperCase() + ' ▾';
     for (const button of document.querySelectorAll('[data-language]')) {
@@ -4281,9 +4355,7 @@ function displayData(data) {
                 depth: parseQuakeDepth(top.cod),
                 loc: top.en_anm || top.anm || null,
             });
-            const prev = quakeInfoSoundState.get(matchKey);
-            if (jmaHistoryReceived && (!prev || prev.fp !== fp) && !muteReport) playSound(sndNewInfo);
-            quakeInfoSoundState.set(matchKey, { ts: tsSeconds, fp });
+            playQuakeInfoSound({max_int: top.maxi}, matchKey, tsSeconds, fp, !jmaHistoryReceived);
         }
         jmaHistoryReceived = true;
         renderQuakeHistory(data.quakes);

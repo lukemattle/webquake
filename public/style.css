@@ -361,6 +361,12 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 
 .settings-note { color: #888; font-size: 0.78em; line-height: 1.4; }
 .sound-location-note { max-width: 290px; }
+.sound-select {
+    background: #292929; color: #eee; border: 1px solid #555;
+    border-radius: 3px; padding: 4px 6px; font: inherit; font-size: 0.8em;
+    max-width: 145px; min-width: 70px;
+}
+.sound-select:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
 #clear-sound-location:disabled { opacity: 0.4; cursor: default; }
 #map.choosing-sound-location, #map.choosing-sound-location .leaflet-interactive { cursor: crosshair; }
 #sound-location-prompt {
