@@ -103,10 +103,15 @@ def _check_required_env():
 # Keep the session key stable across restarts and workers to preserve logins.
 SECRET_KEY = _require_env("WEBQUAKE_SECRET_KEY")
 
-# dmdws reads these credentials; validate them here for one startup error list.
-DMDATA_REFRESH_TOKEN = _require_env("WEBQUAKE_DMDATA_REFRESH_TOKEN")
-_require_env("WEBQUAKE_DMDATA_CLIENT_ID")
-_require_env("WEBQUAKE_DMDATA_CLIENT_SECRET")
+JMA_PROVIDER = _optional_env("WEBQUAKE_JMA_PROVIDER").lower() or 'wolfx'
+if JMA_PROVIDER not in ('dmdata', 'wolfx'):
+    raise SystemExit('WEBQUAKE_JMA_PROVIDER must be dmdata or wolfx')
+# Wolfx does not use DMDATA OAuth credentials.
+DMDATA_REFRESH_TOKEN = ''
+if JMA_PROVIDER == 'dmdata':
+    DMDATA_REFRESH_TOKEN = _require_env("WEBQUAKE_DMDATA_REFRESH_TOKEN")
+    _require_env("WEBQUAKE_DMDATA_CLIENT_ID")
+    _require_env("WEBQUAKE_DMDATA_CLIENT_SECRET")
 
 # Public URL of this deployment, used for notification click-through links.
 SITE_URL = _optional_env("WEBQUAKE_SITE_URL")
@@ -151,21 +156,26 @@ _check_required_env()
 if not ADMIN_ENABLED:
     dmdws.logger.warning("WEBQUAKE_ADMIN_PASSWORD is not set - the admin panel is disabled")
 
-conn = dmdws.Connection(
-    refresh_token=DMDATA_REFRESH_TOKEN,
-    types=[
-        "VXSE43",  # EEW warning (predicted intensity 5− or above).
-        "VXSE45",  # EEW forecast.
-        "VXSE47",  # PLUM intensity prediction.
-        "VXSE51",  # Observed intensity report.
-        "VXSE52",  # Epicenter report.
-        "VXSE53",  # Epicenter and observed intensity report.
-        "VTSE41",  # Tsunami warning/advisory/forecast.
-        "VTSE51",  # Coastal tsunami observations.
-        "VTSE52"  # Offshore tsunami observations.
-    ],
-    debug=True  # If you want to see the debug messages, disable in production
-)
+if JMA_PROVIDER == 'wolfx':
+    import wolfx
+    conn = wolfx.Connection()
+else:
+    conn = dmdws.Connection(
+        refresh_token=DMDATA_REFRESH_TOKEN,
+        types=[
+            "VXSE43",  # EEW warning (predicted intensity 5− or above).
+            "VXSE45",  # EEW forecast.
+            "VXSE47",  # PLUM intensity prediction.
+            "VXSE51",  # Observed intensity report.
+            "VXSE52",  # Epicenter report.
+            "VXSE53",  # Epicenter and observed intensity report.
+            "VTSE41",  # Tsunami warning/advisory/forecast.
+            "VTSE51",  # Coastal tsunami observations.
+            "VTSE52"  # Offshore tsunami observations.
+        ],
+        debug=True  # If you want to see the debug messages, disable in production
+    )
+
 
 def _safe_ts(iso_str):
     """Parse an ISO datetime string to a Unix timestamp, or return None."""
@@ -577,6 +587,8 @@ def _extract_and_store_stations(event_id, data):
     quake_stations."""
     if not event_id:
         return
+    if data.get('wolfx_product') in ('VXSE61', 'VXSE62'):
+        return  # Long-period-only observations must not erase seismic stations.
     intensity = data.get('body', {}).get('body', {}).get('intensity', {})
     stations_raw = intensity.get('stations', [])
     rows = []
@@ -589,15 +601,32 @@ def _extract_and_store_stations(event_id, data):
                          float(info['lat']),
                          float(info['lon']),
                          intensity_val))
+    if data.get('source') == 'wolfx':
+        if event_id in cancelled_event_ids:
+            return False
+        with db.Database() as cursor:
+            cursor.execute('SELECT event_id,code,name_jp,lat,lon,intensity FROM quake_stations WHERE event_id = ?', (event_id,))
+            previous = cursor.fetchall()
+            complete = data.get('wolfx_payload', {}).get('event', {}).get('completeness') == 'complete'
+            if sorted(previous) == sorted(rows):
+                return False
+            if complete:
+                cursor.execute('DELETE FROM quake_stations WHERE event_id = ?', (event_id,))
+            cursor.executemany(
+                'INSERT OR REPLACE INTO quake_stations (event_id,code,name_jp,lat,lon,intensity) VALUES (?,?,?,?,?,?)', rows)
+        _invalidate_quake_points_index()
+        return True
     if rows:
         with db.Database() as cursor:
             cursor.executemany(
-                'INSERT OR IGNORE INTO quake_stations (event_id,code,name_jp,lat,lon,intensity) VALUES (?,?,?,?,?,?)',
-                rows
-            )
+                'INSERT OR IGNORE INTO quake_stations (event_id,code,name_jp,lat,lon,intensity) VALUES (?,?,?,?,?,?)', rows)
             changed = cursor.rowcount
         if changed:
             _invalidate_quake_points_index()
+        return bool(changed)
+    return False
+
+cancelled_event_ids = set()
 
 volcanic_origin_event_ids = set()  # Event IDs for eruption-triggered tsunami reports.
 
@@ -994,6 +1023,28 @@ def process_data(data):
 
 def on_message(message: dict):
     dmdws.logger.info(message['type'])
+
+    if message['type'] == 'wolfx_retraction' and JMA_PROVIDER == 'wolfx':
+        # Preserve the event/decoded archive, but remove cancelled current map
+        # points. The feed retains cancellations, so startup backfill is corrected.
+        event_id = message.get('event_id')
+        if event_id:
+            cancelled_event_ids.add(event_id)
+            with db.Database() as cursor:
+                cursor.execute('DELETE FROM quake_stations WHERE event_id = ?', (event_id,))
+                cursor.execute('DELETE FROM quake_epicenters WHERE event_id = ?', (event_id,))
+            _invalidate_quake_points_index()
+            if recent_past_quake_data and recent_past_quake_data.get('event_id') == event_id:
+                clear_recent_past_quake_data()
+            send_data_to_all_sockets({'type': 'quake_points_index', 'events': _build_quake_points_index()})
+        return
+
+    if message['type'] == 'source_status' and message.get('source') == 'wolfx':
+        for cached in (recent_tsunami_data, recent_offshore_obs_data):
+            if cached and cached.get('source') == 'wolfx':
+                cached['source_valid_until'] = 0
+                send_data_to_all_sockets(cached.copy())
+        return
     
     if message['type'] == 'data':
         dmdws.logger.info(message['head']['type'])
@@ -1005,9 +1056,29 @@ def on_message(message: dict):
             dmdws.logger.error('process_data failed for %s: %s', message.get('head', {}).get('type', 'unknown'), e)
             return
 
+        if message.get('source'):
+            cancelled_event_ids.discard(output_data.get('event_id'))
+            output_data['source'] = message['source']
+        if message.get('source_valid_until'):
+            output_data['source_valid_until'] = message['source_valid_until']
+
+        if message.get('_historical'):
+            if store_data(output_data, message) is not False:
+                _bg_executor.submit(_persist_message, message, output_data)
+            return  # Backfill DB/files without live overlays, replay markers or push.
+
+        # Separate the effective live overlay from the report being archived:
+        # long-period-only products must not rewrite their seismic observations.
+        display_output = output_data
+        if message.get('wolfx_product') in ('VXSE61', 'VXSE62') and recent_past_quake_data and recent_past_quake_data.get('event_id') == output_data.get('event_id'):
+            display_output = {**recent_past_quake_data,
+                              'max_lpgm': output_data.get('max_lpgm', 0),
+                              'report_time': output_data['report_time']}
         # Broadcast before disk writes or notifications can delay clients.
-        store_recent_data(output_data, message)
-        send_data_to_all_sockets(output_data)
+        store_recent_data(display_output, message)
+        send_data_to_all_sockets(display_output)
+        if message.get('_source_refresh_only'):
+            return  # Renew Wolfx freshness without duplicate DB rows or alerts.
         store_data(output_data, message)
         if message['head']['type'] in ('VXSE53', 'VXSE52'):
             send_data_to_all_sockets({'type': 'quake_points_index', 'events': _build_quake_points_index()})
@@ -1277,21 +1348,24 @@ with db.Database() as cursor:
         except Exception:
             pass
 
-def _store_epicenter(event_id, lat, lon):
-    if not event_id or lat is None or lon is None:
+def _store_epicenter(event_id, lat, lon, replace=False):
+    if not event_id or lat is None or lon is None or event_id in cancelled_event_ids:
         return
     try:
         ts = int(datetime.strptime(event_id, '%Y%m%d%H%M%S').replace(tzinfo=JST).timestamp())
     except Exception:
         ts = None
     with db.Database() as cursor:
-        cursor.execute(
-            'INSERT OR IGNORE INTO quake_epicenters (event_id, lat, lon, timestamp) VALUES (?, ?, ?, ?)',
-            (event_id, lat, lon, ts)
-        )
+        sql = 'INSERT OR IGNORE INTO quake_epicenters (event_id, lat, lon, timestamp) VALUES (?, ?, ?, ?)'
+        if replace:
+            sql = ('INSERT INTO quake_epicenters (event_id, lat, lon, timestamp) VALUES (?, ?, ?, ?) '
+                   'ON CONFLICT(event_id) DO UPDATE SET lat=excluded.lat, lon=excluded.lon, timestamp=excluded.timestamp '
+                   'WHERE lat IS NOT excluded.lat OR lon IS NOT excluded.lon')
+        cursor.execute(sql, (event_id, lat, lon, ts))
         changed = cursor.rowcount
     if changed:
         _invalidate_quake_points_index()
+    return bool(changed)
 
 # Backfill only files newer than each telegram type's saved high-water mark.
 # Live inserts use OR IGNORE, so overlap with incoming messages is harmless.
@@ -1303,7 +1377,8 @@ def _backfill_stations():
         mark_key = f'backfill_{msg_type}'
         mark = marks.get(mark_key) or 0
         newest = mark
-        for path in glob.glob(os.path.join(BASE_DIR, 'data_messages', msg_type, '*.json')):
+        for path in sorted(glob.glob(os.path.join(BASE_DIR, 'data_messages', msg_type, '*.json')),
+                           key=lambda p: _persisted_file_ts(p) or 0):
             file_ts = _persisted_file_ts(path)
             if file_ts is not None and file_ts <= mark:
                 continue
@@ -1327,6 +1402,31 @@ _background_tasks.append(_backfill_stations)
 
 def store_data(output_data, data):
     table_name = f"{data['head']['type'].upper()}"
+
+    if data.get('source') == 'wolfx' and table_name in (
+            'VXSE43', 'VXSE45', 'VXSE47', 'VXSE51', 'VXSE52', 'VXSE53', 'VTSE41', 'VTSE51'):
+        # Existing columns are enough to recognize retained snapshots after a
+        # process restart. Keep the deployed schema and table representations.
+        with db.Database() as cursor:
+            cursor.execute(f'PRAGMA table_info({table_name})')
+            columns = [row[1] for row in cursor.fetchall() if row[1] != 'id' and row[1] in output_data]
+            values = [', '.join(str(v) for v in output_data[c]) if isinstance(output_data[c], list)
+                      and output_data[c] else None if isinstance(output_data[c], list)
+                      else output_data[c] for c in columns]
+            if columns:
+                where = ' AND '.join(f'{c} IS ?' for c in columns)
+                cursor.execute(f'SELECT 1 FROM {table_name} WHERE {where} LIMIT 1', values)
+                duplicate = cursor.fetchone() is not None
+            else:
+                duplicate = False
+        if duplicate:
+            changed = False
+            if table_name in ('VXSE52', 'VXSE53') and data.get('wolfx_product') not in ('VXSE61', 'VXSE62'):
+                changed = _store_epicenter(output_data.get('event_id', ''), output_data.get('lat'), output_data.get('lon'), replace=True)
+            if table_name == 'VXSE53' and data.get('wolfx_product') not in ('VXSE61', 'VXSE62'):
+                if _extract_and_store_stations(output_data.get('event_id', ''), data):
+                    return True
+            return bool(changed)
 
     # Cancellations omit earthquake data; storing them would create phantom events.
     if output_data.get('type') == 'eew_clear':
@@ -1354,8 +1454,9 @@ def store_data(output_data, data):
                 ', '.join(output_data.get('regions_jp', [])) if output_data.get('regions_jp') else None,
                 output_data.get('no_tsunami', None)
             ))
-        _extract_and_store_stations(output_data.get('event_id', ''), data)
-        _store_epicenter(output_data.get('event_id', ''), output_data.get('lat'), output_data.get('lon'))
+        if data.get('wolfx_product') not in ('VXSE61', 'VXSE62'):
+            _extract_and_store_stations(output_data.get('event_id', ''), data)
+        _store_epicenter(output_data.get('event_id', ''), output_data.get('lat'), output_data.get('lon'), replace=data.get('source') == 'wolfx')
     elif table_name == 'VXSE45':
         with db.Database() as cursor:
             cursor.execute('''
@@ -1431,7 +1532,7 @@ def store_data(output_data, data):
                 output_data.get('magnitude', None), output_data.get('depth', None),
                 output_data.get('no_tsunami', None)
             ))
-        _store_epicenter(output_data.get('event_id', ''), output_data.get('lat'), output_data.get('lon'))
+        _store_epicenter(output_data.get('event_id', ''), output_data.get('lat'), output_data.get('lon'), replace=data.get('source') == 'wolfx')
     elif table_name == 'VTSE41':
         with db.Database() as cursor:
             cursor.execute('''
@@ -3761,6 +3862,8 @@ def _run_server():
         conn.start()
         stopped.wait()
     finally:
+        if hasattr(conn, 'stop'):
+            conn.stop()
         gevent.killall(tasks)
         server.stop(timeout=1)
         open_sockets.shutdown()

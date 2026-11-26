@@ -3051,6 +3051,10 @@ function kindLabelZh(code) {
     return '預報';
 }
 
+setInterval(() => {
+    if (activeTsunamiData?.source === 'wolfx' || activeTsunamiObs?.source === 'wolfx') renderTsunamiCard();
+}, 1000);
+
 function renderTsunamiCard() {
     const panel = document.getElementById('tsunami-panel');
     if (!showJapan() || (!activeTsunamiData && !activeTsunamiObs)) {
@@ -3062,6 +3066,14 @@ function renderTsunamiCard() {
     const d   = activeTsunamiData;
     const obs = activeTsunamiObs;
     let html = '<div class="tsun-card">';
+    const sourceData = d?.source === 'wolfx' ? d : (obs?.source === 'wolfx' ? obs : null);
+    if (sourceData) {
+        const clock = replayActive && replayClock != null ? currentReplayClock() : Date.now() / 1000;
+        const stale = !sourceData.source_valid_until || clock >= sourceData.source_valid_until;
+        html += stale
+            ? '<div class="tsun-time" role="status"><span class="en">Wolfx update unavailable. Last known report; check JMA for current warnings.</span><span class="ja">Wolfxの更新を確認できません。前回の情報です。最新の警報は気象庁で確認してください。</span><span class="zh">無法確認 Wolfx 更新。以下為上次資訊，請向日本氣象廳確認最新警報。</span></div>'
+            : '';
+    }
 
     if (d) {
         const level = d.warning_level || '';

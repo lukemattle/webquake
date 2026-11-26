@@ -60,6 +60,11 @@ Real-time observation data
     (https://dmdata.jp/). DMDATA access requires the deployment operator's own
     paid subscription and is subject to terms. Other feeds remain subject to their respective providers' access and use terms. No live observation data is bundled in this repository.
 
+    JMA reports can also be fetched at runtime through Wolfx
+    (https://wolfx.jp/). Wolfx snapshots are normalized by WebQuake; they are
+    not original DM-DSS telegrams. The original data providers' terms still
+    apply. No live Wolfx snapshots are bundled in this repository.
+
 Kyoshin Monitor colour-scale conversion
 
     The algorithm converting Kyoshin Monitor tile colours back to seismic

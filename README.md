@@ -12,17 +12,23 @@ For issue reports and pull requests, see [CONTRIBUTING.md](CONTRIBUTING.md).
 Japan has thousands of seismological observation stations embedded in land & sea all over. When an earthquake occurs in/near Japan, these stations pick up seismic waves and when 2 or more of them observe abnormalities, the Japan Meteorological Agency (JMA) analyses and predicts an approximate location for the earthquake's intensity and epicenter. If the estimated intensity (over land) is severe enough, an emergency alert is sent to all people in the area to warn them of strong shaking.
 If the earthquake occurred over sea (and it was strong enough, among other factors), the JMA further analyses the earthquake to determine if a tsunami is possible, and releases tsunami warnings as appropriate. WebQuake aims to collate this information into one map interface, for easy information access in an emergency, available in both English and Japanese. It also uses notifications to deliver earthquake and tsunami warnings - when WebQuake isn't open.
 
+JMA data defaults to Wolfx (`WEBQUAKE_JMA_PROVIDER=wolfx`), which does not require DMDATA OAuth credentials. Set `WEBQUAKE_JMA_PROVIDER=dmdata` to use the original DM-DSS provider; the subscription and OAuth setup in steps 2–4 below are needed only for that provider.
+
+Wolfx snapshots are normalized into WebQuake's existing earthquake, tsunami, and replay formats. They cover a limited recent-event window and cannot reconstruct a complete original telegram archive or every missed revision. Predicted long-period intensity is not available from Wolfx EEW. Equivalent latency and availability to DM-DSS have not been established. A tsunami source freshness warning means the last report cannot currently be verified; it does not mean the warning has been lifted. Taiwan, NIED, S-net, and the JMA history list retain their existing feeds.
+
+Run the isolated provider tests with `python -X utf8 -m unittest discover -s private -p test_wolfx.py`. These tests do not start the application or send notifications.
+
 How to run:
 1. Ensure Python is installed. WebQuake requires 3.11 or newer. When python is installed, use pip to install the requirements in `private/requirements.txt`.<br>Note that gevent has 'best-effort' support on Windows. Because of this, WebQuake should not be run *in production* in Windows.
-2. Go to [DM-DSS](https://dmdata.jp) and subscribe to a plan which gives you the 9 telegrams that WebQuake requires (VXSE43,45,47,51,52,53 AND VTSE41,51,52). The cheapest combination of plans that cover this are 緊急地震（予報）, 緊急地震（警報）, 地震・津波関連 (Emergency earthquake (forecast), Emergency earthquake (alarm) and Earthquakes and Tsunamis) - for a cost of 120JPY/day.
-3. In DMDATA's manager, create an OAuth2 application - requesting every scope the connection uses (contract.list, telegram.list, telegram.data socket.start, socket.list, socket.close, telegram.get.earthquake, gd.earthquake, eew.get.forecast, eew.get.warning, gd.eew). This will give you a client ID and client secret. Keep these somewhere safe.
-4. Obtain a refresh token. Ensure you have the repo downloaded and open a terminal in the `private` folder. Then run:
+2. For DMDATA only: go to [DM-DSS](https://dmdata.jp) and subscribe to a plan which gives you the 9 telegrams that WebQuake requires (VXSE43,45,47,51,52,53 AND VTSE41,51,52). The cheapest combination of plans that cover this are 緊急地震（予報）, 緊急地震（警報）, 地震・津波関連 (Emergency earthquake (forecast), Emergency earthquake (alarm) and Earthquakes and Tsunamis) - for a cost of 120JPY/day.
+3. For DMDATA only: in DMDATA's manager, create an OAuth2 application - requesting every scope the connection uses (contract.list, telegram.list, telegram.data socket.start, socket.list, socket.close, telegram.get.earthquake, gd.earthquake, eew.get.forecast, eew.get.warning, gd.eew). This will give you a client ID and client secret. Keep these somewhere safe.
+4. For DMDATA only: obtain a refresh token. Ensure you have the repo downloaded and open a terminal in the `private` folder. Then run:
 ``` 
     export WEBQUAKE_DMDATA_CLIENT_ID=your-client-id
     export WEBQUAKE_DMDATA_CLIENT_SECRET=your-client-secret
     python get_refresh.py
 ```
-5. Set the environment by copying .env.example to .env and filling it in. Only 4 variables are required for WebQuake to start, but filling in the optional ones is highly recommended.<br>The default WebSocket limits should only be changed if needed.
+5. Set the environment by copying .env.example to .env and filling it in. `WEBQUAKE_SECRET_KEY` is required for both providers. The three `WEBQUAKE_DMDATA_*` OAuth variables are required only with `WEBQUAKE_JMA_PROVIDER=dmdata`. Configure the optional variables for the features you use.<br>The default WebSocket limits should only be changed if needed.
 6. Run `python private/main.py`. On first start, it'll create everything it needs to run (DB and folders). It binds to port 8000, so open it with http://localhost:8000 <br>By default, localhost binding will prevent direct access via other machines.
 7. Replace remaining upstream values, in `index.html` replace `OS_APP_ID` with your OneSignal app ID, and in `app.js` the NTFY variables must match the backend variables in your environment. Also fill in your CARTO API key in `app.js` and `https://URL/` in `index.html`. This does not require a restart.
 8. Wire up notifications through OneSignal, ntfy and Discord:
