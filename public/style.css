@@ -360,6 +360,17 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 .lang-seg-btn.active { background: #4a9eff; color: #fff; }
 
 .settings-note { color: #888; font-size: 0.78em; line-height: 1.4; }
+.sound-location-note { max-width: 290px; }
+#clear-sound-location:disabled { opacity: 0.4; cursor: default; }
+#map.choosing-sound-location, #map.choosing-sound-location .leaflet-interactive { cursor: crosshair; }
+#sound-location-prompt {
+    position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 1100; width: max-content; max-width: calc(100% - 24px);
+    box-sizing: border-box; background: #141414; color: #eee;
+    border: 1px solid #4a9eff; border-radius: 6px; padding: 10px 12px;
+    font-size: 0.88em; pointer-events: auto;
+}
+#sound-location-prompt[hidden] { display: none; }
 .settings-note-warn { color: #e0b84a; }
 #ntfy-subscribe-links { display: flex; flex-direction: column; gap: 6px; }
 .ntfy-btn {

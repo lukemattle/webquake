@@ -305,6 +305,122 @@ let muteReport         = false;
 let muteTsunamiWarning = false;
 let muteTsunamiAdvisory = false;
 
+// Local to this browser; never sent to the server or used by rendering filters.
+const SOUND_LOCATION_KEY = 'webquake_dev_sound_location';
+let soundLocation = null;
+try {
+    const saved = JSON.parse(localStorage.getItem(SOUND_LOCATION_KEY));
+    if (validSoundLocation(saved)) soundLocation = saved;
+} catch (e) {}
+let soundLocationRevision = 0;
+let choosingSoundLocation = false;
+let soundLocationMark = null;
+
+function validSoundLocation(point) {
+    return point && Number.isFinite(point.lat) && Math.abs(point.lat) <= 90 &&
+        Number.isFinite(point.lon) && Math.abs(point.lon) <= 180;
+}
+
+function setSoundLocation(point) {
+    if (point !== null && !validSoundLocation(point)) return;
+    soundLocation = point;
+    soundLocationRevision++;
+    try {
+        if (point) localStorage.setItem(SOUND_LOCATION_KEY, JSON.stringify(point));
+        else localStorage.removeItem(SOUND_LOCATION_KEY);
+    } catch (e) {}
+    cancelSoundLocationSelection();
+    updateSoundLocationUI();
+}
+
+function chooseSoundLocation() {
+    choosingSoundLocation = true;
+    document.getElementById('settings-popup').classList.remove('visible');
+    collapseSidebarOnMobile();
+    document.getElementById('sound-location-prompt').hidden = false;
+    map.getContainer().classList.add('choosing-sound-location');
+}
+
+function cancelSoundLocationSelection() {
+    choosingSoundLocation = false;
+    document.getElementById('sound-location-prompt').hidden = true;
+    map.getContainer().classList.remove('choosing-sound-location');
+}
+
+function updateSoundLocationUI() {
+    document.getElementById('sound-location-coordinates').textContent = soundLocation
+        ? `${soundLocation.lat.toFixed(4)}, ${soundLocation.lon.toFixed(4)}` : '';
+    document.getElementById('clear-sound-location').disabled = !soundLocation;
+    if (soundLocationMark) map.removeLayer(soundLocationMark);
+    soundLocationMark = soundLocation ? L.circleMarker([soundLocation.lat, soundLocation.lon], {
+        radius: 7, color: '#fff', weight: 2, fillColor: '#4a9eff', fillOpacity: 1,
+        interactive: false, pane: 'markerPane'
+    }).addTo(map) : null;
+    updateSoundLocationMarkerSize();
+}
+
+function updateSoundLocationMarkerSize() {
+    if (!soundLocationMark) return;
+    const radius = Math.max(3, Math.min(7, 3 + (map.getZoom() - 5) * 0.8));
+    soundLocationMark.setRadius(radius);
+    soundLocationMark.setStyle({weight: radius < 5 ? 1 : 2});
+}
+
+// Heuristic epicentral radii in km, only for EEWs without regional estimates.
+// These are sound-selection limits, not a shaking prediction or safety boundary.
+const SOUND_RADIUS_KM = {
+    '0': 0, '1': 50, '2': 100, '3': 150, '4': 250,
+    '5-': 350, '5+': 450, '6-': 600, '6+': 750, '7': 1000
+};
+
+function quakeAffectsSoundLocation(data, allowDistance, point = soundLocation) {
+    if (!point) return true;
+    const areas = data.area_intensities || [];
+    // The presence of regional data is authoritative, even if our region is
+    // omitted or has an unknown intensity. Never fall back to distance then.
+    if (areas.length) {
+        const code = findRegionCodeForPoint(point.lat, point.lon);
+        return code != null && areas.some(area => String(area.code) === String(code) && intRank(area.max_int) > 0);
+    }
+    if (!allowDistance || !validSoundLocation({lat: data.lat, lon: data.lon})) return false;
+    const radius = SOUND_RADIUS_KM[data.max_int] || 0;
+    return radius > 0 && L.latLng(point.lat, point.lon).distanceTo([data.lat, data.lon]) <= radius * 1000;
+}
+
+function withLocalizedQuakeSound(data, allowDistance, play) {
+    if (replayActive) return;
+    if (!soundLocation) { play(); return; }
+    const revision = soundLocationRevision;
+    const point = soundLocation;
+    const check = () => {
+        if (!replayActive && revision === soundLocationRevision &&
+            quakeAffectsSoundLocation(data, allowDistance, point)) play();
+    };
+    // A report can arrive before the GeoJSON. Wait for the existing load rather
+    // than silently discarding its regional match during startup.
+    if ((data.area_intensities || []).length && !_regionFeatureBounds) japanRegionsReady.then(check);
+    else check();
+}
+
+function playEewSounds(data, key) {
+    withLocalizedQuakeSound(data, true, () => {
+        if (!seenEewOrigins.has(key)) {
+            seenEewOrigins.add(key);
+            if (!muteEewAlert) playSound(sndNewQuake);
+        }
+        if (!muteEewReport) playSound(sndNewReport);
+    });
+}
+
+function playQuakeInfoSound(data, key, ts, fp) {
+    withLocalizedQuakeSound(data, false, () => {
+        const matchKey = resolveQuakeSoundKey(key, ts);
+        const prev = quakeInfoSoundState.get(matchKey);
+        if ((!prev || prev.fp !== fp) && !muteReport) playSound(sndNewInfo);
+        quakeInfoSoundState.set(matchKey, { ts, fp });
+    });
+}
+
 function toggleSettings() {
     closeBarMenus();
     if (window.innerWidth <= 750 && !document.getElementById('settings-popup').classList.contains('visible')) {
@@ -501,6 +617,16 @@ setInterval(_evalNiedWarning, 1000);
 
 const CARTO_API_KEY = 'CARTO_KEY';
 const map = L.map('map', { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, zoomControl: false, preferCanvas: true });
+map.on('click', event => {
+    if (choosingSoundLocation) {
+        setSoundLocation({lat: event.latlng.lat, lon: event.latlng.wrap().lng});
+    }
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && choosingSoundLocation) cancelSoundLocationSelection();
+});
+updateSoundLocationUI();
+map.on('zoomend', updateSoundLocationMarkerSize);
 L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_nolabels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/">OSM</a>',
     subdomains: 'abcd', maxZoom: 19
@@ -1082,7 +1208,7 @@ function resetTwRegionColors() {
 
 // Resolve against this script so /dev/ja/ and /dev/zh/ use the same development
 // assets as /dev/, without falling back to production files or a language path.
-fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
+const japanRegionsReady = fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
     .then(gj => {
         _regionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
@@ -1097,7 +1223,7 @@ fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
         // this resolved, the layer would otherwise appear regardless.
         if (!showJapan()) map.removeLayer(regionLayer);
         refreshNiedSpatialState();
-    });
+    }).catch(error => console.error('Could not load Japan regions', error));
 
 fetch(new URL('tsunami-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
@@ -4143,7 +4269,9 @@ function clearEewDisplay(key) {
 function displayData(data) {
     if (data.type === 'jma_history') {
         const top = data.quakes.length > 0 ? data.quakes[0] : null;
-        if (top) {
+        // History summaries have no regional intensities. Localized sounds use
+        // the full report, and must not have their dedup state consumed here.
+        if (top && !soundLocation) {
             const tsSeconds = top.at ? Math.round(new Date(top.at).getTime() / 1000) : null;
             const matchKey = resolveQuakeSoundKey(top.ctt || top.at, tsSeconds);
             const fp = quakeSoundFingerprint({
@@ -4220,11 +4348,7 @@ function displayData(data) {
         hasPastQuakeData = false;
         if (jmaSidebarActiveTs !== null || liveStationsHidden) { clearJmaStations(); renderSidebar(lastQuakeData); }
         const key = eewEventKey(data);
-        if (!seenEewOrigins.has(key)) {
-            seenEewOrigins.add(key);
-            if (!muteEewAlert) playSound(sndNewQuake);
-        }
-        if (!muteEewReport) playSound(sndNewReport);
+        playEewSounds(data, key);
         if (activeEews.get(key)?.warning) data = { ...data, warning: true };
         activeEews.set(key, data);
         renderEewPanels();
@@ -4252,9 +4376,7 @@ function displayData(data) {
                 depth: data.depth,
                 loc,
             });
-            const prev = quakeInfoSoundState.get(matchKey);
-            if ((!prev || prev.fp !== fp) && !muteReport) playSound(sndNewInfo);
-            quakeInfoSoundState.set(matchKey, { ts: tsSeconds, fp });
+            playQuakeInfoSound(data, matchKey, tsSeconds, fp);
         }
         if (data.max_int && data.max_int !== '0') loadTimelineMarkersAndGaps();
         hasPastQuakeData = true;
