@@ -1,6 +1,8 @@
 """Isolated provider checks; never import/start the production app or send alerts."""
 import ast
 import copy
+import glob
+import os
 from datetime import datetime
 import gzip
 import io
@@ -9,6 +11,7 @@ from pathlib import Path
 import sys
 import sqlite3
 import tempfile
+import threading
 from contextlib import contextmanager
 from datetime import timezone, timedelta
 import time
@@ -208,12 +211,17 @@ class WolfxTests(unittest.TestCase):
     def test_freshness_renewal_broadcasts_without_event_side_effects(self):
         tree=ast.parse((ROOT/'private/main.py').read_text(encoding='utf-8'))
         fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='on_message')
-        ns={'dmdws':Mock(),'process_data':self.process,'store_recent_data':Mock(), 'cancelled_event_ids':set(),
-            'send_data_to_all_sockets':Mock(),'store_data':Mock(),'_bg_executor':Mock()}
+        ns={'dmdws':Mock(),'process_data':self.process,'store_recent_data':Mock(), 'cancelled_event_ids':set(), '_wolfx_storage_lock':threading.RLock(),
+            'send_data_to_all_sockets':Mock(),'store_data':Mock(),'_bg_executor':Mock(),
+            'recent_tsunami_data': {'type':'tsunami', 'source':'wolfx', 'obs_heights':[1.2]}, 'recent_offshore_obs_data':None}
         exec(compile(ast.Module(body=[fn],type_ignores=[]),'<on_message>','exec'),ns)
         message=wolfx.adapt_tsunami(self.tsunami,now=wolfx.timestamp('2026-11-17T03:40:00Z'))[0]
         ns['on_message']({**message,'_source_refresh_only':True})
         ns['send_data_to_all_sockets'].assert_called_once()
+        sent = ns['send_data_to_all_sockets'].call_args.args[0]
+        self.assertTrue(sent['source_refresh_only'])
+        self.assertEqual(sent['obs_heights'], [1.2])
+        ns['store_recent_data'].assert_not_called()
         ns['store_data'].assert_not_called()
         ns['_bg_executor'].submit.assert_not_called()
 
@@ -243,7 +251,7 @@ class WolfxTests(unittest.TestCase):
     def test_historical_messages_do_not_broadcast_or_notify(self):
         tree=ast.parse((ROOT/'private/main.py').read_text(encoding='utf-8'))
         fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='on_message')
-        ns={'dmdws':Mock(),'process_data':self.process,'store_recent_data':Mock(), 'cancelled_event_ids':set(),
+        ns={'dmdws':Mock(),'process_data':self.process,'store_recent_data':Mock(), 'cancelled_event_ids':set(), '_wolfx_storage_lock':threading.RLock(),
             'send_data_to_all_sockets':Mock(),'store_data':Mock(), '_persist_message':Mock(),
             '_bg_executor':Mock()}
         exec(compile(ast.Module(body=[fn],type_ignores=[]),'<on_message>','exec'),ns)
@@ -255,13 +263,14 @@ class WolfxTests(unittest.TestCase):
 
     def test_station_corrections_and_restart_dedup_keep_database_schema(self):
         tree=ast.parse((ROOT/'private/main.py').read_text(encoding='utf-8'))
-        names={'store_data','_extract_and_store_stations','_store_epicenter'}
+        names={'store_data','_extract_and_store_stations','_store_epicenter', 'on_message',
+               '_backfill_stations', '_persisted_file_ts', '_extract_coord'}
         nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
         with tempfile.TemporaryDirectory() as directory:
             connection=sqlite3.connect(str(Path(directory)/'isolated.db'))
             self.addCleanup(connection.close)
             # Use the deployed CREATE TABLE definitions, never the live database.
-            for table in ('VXSE53','quake_stations','quake_epicenters'):
+            for table in ('VXSE53','quake_stations','quake_epicenters','backfill_meta'):
                 for node in ast.walk(tree):
                     if isinstance(node,ast.Constant) and isinstance(node.value,str) and ('CREATE TABLE IF NOT EXISTS '+table+' (') in node.value:
                         connection.execute(node.value)
@@ -275,7 +284,11 @@ class WolfxTests(unittest.TestCase):
 
             ns={'db':Mock(Database=database),'datetime':datetime,
                 'JST':timezone(timedelta(hours=9)),'dmdws':Mock(),
-                '_invalidate_quake_points_index':Mock(),'cancelled_event_ids':set(),
+                '_invalidate_quake_points_index':Mock(),'cancelled_event_ids':set(), '_wolfx_storage_lock':threading.RLock(),
+                'BASE_DIR':directory, 'glob':glob, 'os':os, 'json':json, 'JMA_PROVIDER':'wolfx',
+                'recent_past_quake_data':None, 'send_data_to_all_sockets':Mock(),
+                '_build_quake_points_index':Mock(return_value=[]), 'process_data':self.process,
+                '_bg_executor':Mock(), '_persist_message':Mock(),
                 '_station_lookup':{'1241030':{'name':'station','lat':35.7,'lon':140.7}}}
             exec(compile(ast.Module(body=nodes,type_ignores=[]),'<storage functions>','exec'),ns)
             event=copy.deepcopy(self.event)
@@ -297,6 +310,21 @@ class WolfxTests(unittest.TestCase):
             corrected=wolfx.adapt_report(event,event['reports'][0])
             ns['store_data'](self.process(corrected),corrected)
             self.assertEqual(connection.execute('SELECT count(*) FROM quake_stations').fetchone()[0],0)
+            self.assertEqual(before,connection.execute('SELECT sql FROM sqlite_master ORDER BY name').fetchall())
+            # A cancellation must survive loss of process memory before replaying
+            # old saved reports on startup, without changing the DB schema.
+            archive = Path(directory)/'data_messages'/'VXSE53'
+            archive.mkdir(parents=True)
+            (archive/'1.json').write_text(json.dumps(message), encoding='utf-8')
+            ns['on_message']({'type':'wolfx_retraction', 'event_id':event['eventId']})
+            ns['cancelled_event_ids'].clear()
+            ns['_backfill_stations']()
+            self.assertEqual(connection.execute('SELECT count(*) FROM quake_epicenters').fetchone()[0], 0)
+            self.assertEqual(connection.execute('SELECT count(*) FROM quake_stations').fetchone()[0], 0)
+            self.assertIn(event['eventId'], ns['cancelled_event_ids'])
+            ns['on_message']({**message, '_historical':True})
+            self.assertEqual(connection.execute('SELECT count(*) FROM backfill_meta WHERE key LIKE ?', ('wolfx_cancelled:%',)).fetchone()[0], 0)
+            self.assertEqual(connection.execute('SELECT count(*) FROM quake_epicenters').fetchone()[0], 1)
             self.assertEqual(before,connection.execute('SELECT sql FROM sqlite_master ORDER BY name').fetchall())
             connection.close()
 
@@ -335,6 +363,143 @@ class WolfxTests(unittest.TestCase):
         for worker in workers:
             worker.join(2)
             self.assertFalse(worker.is_alive())
+        self.listener.assert_called_once()
+
+    def test_japanese_warning_labels(self):
+        area = {**self.eew['WarnArea'][0], 'Type': '\u8b66\u5831'}
+        output = self.process(wolfx.adapt_eew({**self.eew, 'WarnArea': [area]}))
+        self.assertTrue(output['area_intensities'][0]['is_warning'])
+
+    def test_older_tsunami_snapshot_cannot_undo_clear(self):
+        clear = {**self.tsunami, 'status': 'cleared', 'areas': [],
+                 'report': {**self.tsunami['report'], 'time': '2026-11-17T03:39:00Z'}}
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp('2026-11-17T03:40:00Z')):
+            self.conn._on_message(None, json.dumps(clear))
+            self.conn._on_message(None, json.dumps(self.tsunami))
+        self.assertEqual(self.listener.call_count, 1)
+        self.assertEqual(self.process(self.listener.call_args.args[0])['type'], 'tsunami_clear')
+
+    def test_inflight_http_response_cannot_replace_same_time_websocket_correction(self):
+        generation = self.conn._tsunami_generation
+        changed = copy.deepcopy(self.tsunami)
+        changed['areas'][0]['kind'] = '51'
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp('2026-11-17T03:40:00Z')):
+            self.conn._on_message(None, json.dumps(changed))
+            self.conn._on_message(None, json.dumps(self.tsunami), generation)
+        self.assertEqual(self.listener.call_count, 1)
+        self.assertEqual(self.process(self.listener.call_args.args[0])['warning_level'], 'Warning')
+
+    def test_multiple_retained_reports_are_each_delivered_once(self):
+        event = {**self.event, 'reports': [self.report, {**self.report, 'id': 'new', 'time': '2026-11-17T03:39:00Z'}]}
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp('2026-11-17T03:40:00Z')):
+            self.conn._handle_details({'events': [event]})
+            self.conn._handle_details({'events': [event]})
+        self.assertEqual(self.listener.call_count, 2)
+        self.assertTrue(self.listener.call_args_list[0].args[0]['_archive_only'])
+        self.assertNotIn('_historical', self.listener.call_args_list[1].args[0])
+
+    def test_recovered_station_report_cannot_roll_back_newer_epicenter(self):
+        epicenter = {**self.report, 'product':'VXSE52', 'id':'epicenter', 'time':'2026-11-17T03:39:00Z'}
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp('2026-11-17T03:40:00Z')):
+            self.conn._handle_details({'events':[{**self.event, 'reports':[epicenter]}]})
+            self.conn._handle_details({'events':[{**self.event, 'reports':[epicenter, self.report]}]})
+        recovered = self.listener.call_args.args[0]
+        self.assertTrue(recovered['_point_archive_only'])
+        self.assertTrue(recovered['_historical'])
+        self.assertNotIn('_archive_only', recovered)  # Stations can still be recovered.
+
+    def test_aging_report_does_not_trigger_another_delivery(self):
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp(self.report['time']) + 20):
+            self.conn._handle_details({'events': [self.event]})
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp(self.report['time']) + 200):
+            self.conn._handle_details({'events': [self.event]})
+        self.listener.assert_called_once()
+
+    def test_raw_only_eew_metadata_does_not_reannounce_same_warning(self):
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp(self.eew['AnnouncedTime'])):
+            self.conn._on_message(None, json.dumps(self.eew))
+            self.conn._on_message(None, json.dumps({**self.eew, 'Accuracy':{'Depth':'updated text'}}))
+        self.listener.assert_called_once()
+
+    def test_complete_recovery_is_not_deduplicated_as_partial(self):
+        self.conn._handle_details({'events': [{**self.event, 'completeness': 'partial'}]})
+        self.conn._handle_details({'events': [{**self.event, 'completeness': 'complete'}]})
+        self.assertEqual(self.listener.call_count, 2)
+
+    def test_offshore_cancellation_emits_clear_and_does_not_resurrect_older_report(self):
+        observation = {'product': 'VTSE52', 'id': 'offshore', 'time': '2026-11-17T03:38:30Z',
+                       'status': 'issued', 'observed': [{'code': '20001', 'maxWave': {'height': 1.2}}]}
+        cancel = {**observation, 'id': 'cancel', 'time': '2026-11-17T03:39:00Z', 'status': 'cancelled'}
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp('2026-11-17T03:40:00Z')):
+            self.conn._on_message(None, json.dumps({**self.tsunami, 'observations': [observation]}))
+            self.listener.reset_mock()
+            self.conn._on_message(None, json.dumps({**self.tsunami, 'observations': [observation, cancel]}))
+            clears = [call.args[0] for call in self.listener.call_args_list if call.args[0]['type'] == 'wolfx_obs_clear']
+            self.assertEqual(len(clears), 1)
+            self.assertFalse(any(call.args[0].get('head', {}).get('type') == 'VTSE52' for call in self.listener.call_args_list))
+            self.listener.reset_mock()
+            self.conn._on_message(None, json.dumps({**self.tsunami, 'observations': [observation, cancel]}))
+            self.assertFalse(any(call.args[0]['type'] == 'wolfx_obs_clear' for call in self.listener.call_args_list))
+
+    def test_forecast_change_does_not_reannounce_unchanged_coastal_report(self):
+        coastal = {'product':'VTSE51', 'id':'coastal', 'time':'2026-11-17T03:39:00Z',
+                   'observed':[{'code':'200', 'stations':[{'code':'gauge', 'maxWave':{'height':1}}]}]}
+        snapshot = {**self.tsunami, 'observations':[coastal]}
+        with patch.object(wolfx.time, 'time', return_value=wolfx.timestamp('2026-11-17T03:40:00Z')):
+            self.conn._on_message(None, json.dumps(snapshot))
+            changed = copy.deepcopy(snapshot)
+            changed['areas'][0]['kind'] = '51'
+            self.listener.reset_mock()
+            self.conn._on_message(None, json.dumps(changed))
+        primary, observation = [call.args[0] for call in self.listener.call_args_list]
+        self.assertNotIn('_quiet_update', primary)
+        self.assertTrue(observation['_quiet_update'])
+
+    def test_event_can_be_cancelled_reinstated_and_cancelled_again(self):
+        cancelled = {**self.event, 'status': 'cancelled'}
+        for event in (self.event, cancelled, self.event, cancelled):
+            self.conn._handle_details({'events': [event]})
+        self.assertEqual(self.listener.call_count, 4)
+
+    def test_null_optional_comment_and_bad_timestamp_do_not_break_report(self):
+        self.assertIsNone(wolfx.timestamp(123))
+        self.assertIsNotNone(wolfx.adapt_report(self.event, {**self.report, 'comments': {'forecast': None}}))
+
+    def test_archive_only_report_cannot_modify_map_tables(self):
+        tree = ast.parse((ROOT/'private/main.py').read_text(encoding='utf-8'))
+        names = {'_extract_and_store_stations', '_store_epicenter'}
+        ns = {'db': Mock()}
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<map writes>', 'exec'), ns)
+        ns['_extract_and_store_stations']('id', {'_archive_only': True})
+        ns['_store_epicenter']('id', 35, 139, archive_only=True)
+        ns['db'].Database.assert_not_called()
+
+    def test_offshore_clear_uses_existing_client_message(self):
+        tree = ast.parse((ROOT/'private/main.py').read_text(encoding='utf-8'))
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ('on_message', 'clear_recent_offshore_obs_data')]
+        timer = Mock()
+        ns = {'dmdws':Mock(), 'JMA_PROVIDER':'wolfx', 'recent_offshore_obs_data':{},
+              '_offshore_obs_clear_timer':timer, '_timers_lock':threading.Lock(),
+              'send_data_to_all_sockets':Mock()}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<offshore clear>', 'exec'), ns)
+        ns['on_message']({'type':'wolfx_obs_clear'})
+        self.assertIsNone(ns['recent_offshore_obs_data'])
+        timer.cancel.assert_called_once()
+        ns['send_data_to_all_sockets'].assert_called_once_with({'type':'tsunami_obs_clear'})
+
+    def test_freshness_update_has_no_timeline_marker(self):
+        tree = ast.parse((ROOT/'private/main.py').read_text(encoding='utf-8'))
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_history_marker_for')
+        ns = {}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), '<history marker>', 'exec'), ns)
+        self.assertEqual(ns['_history_marker_for']({'type':'tsunami', 'warning_level':'Warning', 'source_refresh_only':True}), (None, None, None))
+
+    def test_malformed_report_does_not_discard_good_reports(self):
+        event = {**self.event, 'reports': [None, {**self.report, 'hypocenter': 0}, self.report],
+                 'hypocenters': [None]}
+        with self.assertLogs('wolfx', level='WARNING'):
+            self.conn._handle_details({'events': [None, event, self.event]})
         self.listener.assert_called_once()
 
 

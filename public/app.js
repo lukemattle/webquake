@@ -1,4 +1,4 @@
-const VERSION = 'v1.1.2';
+const VERSION = 'v1.1.3';
 const FRONTEND_ASSET_BASE = new URL('.', document.currentScript.src);
 
 // Data source filter (Both / Japan only / Taiwan only)
@@ -4518,12 +4518,14 @@ function displayData(data) {
         activeTsunamiData = data;
         drawTsunamiCoastlines(data);
         renderTsunamiCard();
-        if (data.warning_level === 'Warning' || data.warning_level === 'Major Warning') {
-            if (!muteTsunamiWarning) playSound(sndTsunamiWarning);
-        } else {
-            if (!muteTsunamiAdvisory) playSound(sndNewTsunami);
+        if (!data.source_refresh_only) {
+            if (data.warning_level === 'Warning' || data.warning_level === 'Major Warning') {
+                if (!muteTsunamiWarning) playSound(sndTsunamiWarning);
+            } else {
+                if (!muteTsunamiAdvisory) playSound(sndNewTsunami);
+            }
+            if (data.warning_level) loadTimelineMarkersAndGaps();
         }
-        if (data.warning_level) loadTimelineMarkersAndGaps();
     } else if (data.type === 'tsunami_obs') {
         activeTsunamiObs = data;
         drawOffshoreObsRegions(data);

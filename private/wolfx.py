@@ -25,7 +25,7 @@ def area_name(value):
 
 
 def timestamp(value):
-    if not value:
+    if not isinstance(value, str) or not value:
         return None
     try:
         if '/' in value:
@@ -104,7 +104,7 @@ def adapt_eew(data):
                 regions.append({'code': code, 'name': area['Chiiki'],
                                 'forecastMaxInt': {'from': intensity(area.get('Shindo2')),
                                                    'to': intensity(area.get('Shindo1'))},
-                                'isWarning': area.get('Type') == 'Warning',
+                                'isWarning': area.get('Type') in ('警報', 'Warning'),
                                 'isPlum': 'PLUM' in str(area.get('Arrive', '')).upper()})
         if maximum or regions:
             body['intensity'] = {'forecastMaxInt': {'from': maximum, 'to': maximum}, 'regions': regions}
@@ -150,7 +150,7 @@ def adapt_report(event, report):
         body['intensity']['forecastMaxLgInt'] = {'to': str(maximum) if maximum else None}
     comments = report.get('comments') or {}
     body['comments'] = {'free': '\n'.join(str(v) for v in comments.values() if isinstance(v, str)),
-                        'forecast': {'codes': ['0215'] if 'この地震による津波の心配はありません' in comments.get('forecast', '') else []}}
+                        'forecast': {'codes': ['0215'] if 'この地震による津波の心配はありません' in (comments.get('forecast') or '') else []}}
     # The existing event schema already has max_lpgm; no new tables are needed.
     message = envelope('VXSE53' if product in ('VXSE61', 'VXSE62') else product,
                        event['eventId'], issued, target, body)
@@ -209,7 +209,15 @@ def adapt_tsunami(data, now=None):
         deadline = min(deadline, official_deadline)
         if deadline <= now:
             return []
+    # A snapshot can retain several reports of one product. Only its newest
+    # state supplies the current overlay; a newer cancellation retracts older data.
+    latest = {}
     for observation in data.get('observations') or []:
+        product = observation.get('product')
+        order = report_order(observation)
+        if product not in latest or order >= report_order(latest[product]):
+            latest[product] = observation
+    for observation in latest.values():
         product = observation.get('product')
         observed_time = iso(observation.get('time'))
         if product not in ('VTSE51', 'VTSE52') or observation.get('status') == 'cancelled' or not observed_time:
@@ -224,6 +232,12 @@ def adapt_tsunami(data, now=None):
         message['source_valid_until'] = deadline
         message['wolfx_payload'] = data
     return messages
+
+
+def report_order(report):
+    """Official publication/transmission times, independent of receipt time."""
+    issued = timestamp(report.get('time')) or 0
+    return issued, timestamp(report.get('issuedAt')) or issued
 
 
 class Connection:
@@ -247,6 +261,13 @@ class Connection:
         self._stop = threading.Event()
         self._details_wake = threading.Event()
         self._last_eew = {}
+        self._tsunami_order = (0, 0)
+        self._tsunami_generation = 0
+        self._tsunami_deadline = 0
+        self._tsunami_products = set()
+        self._observation_revisions = {}
+        self._report_orders = {}
+        self._cancelled = set()
         self._ws = None
 
     def set_message_listener(self, listener, threading=False):
@@ -262,8 +283,10 @@ class Connection:
             while len(self._seen) > 2000:
                 self._seen.pop(next(iter(self._seen)))
 
-    def _on_message(self, ws, raw):
+    def _on_message(self, ws, raw, tsunami_generation=None):
         with self._delivery_lock:
+            if tsunami_generation is not None and tsunami_generation != self._tsunami_generation:
+                return  # A WebSocket update overtook this in-flight HTTP request.
             self._handle_message(ws, raw)
 
     def _handle_message(self, ws, raw):
@@ -283,7 +306,8 @@ class Connection:
                     if len(self._last_eew) > 100:
                         self._last_eew.pop(next(iter(self._last_eew)))
                     age = time.time() - timestamp(data['AnnouncedTime'])
-                    revision = json.dumps(message, sort_keys=True)
+                    revision = json.dumps({key: value for key, value in message.items()
+                                           if key != 'wolfx_payload'}, sort_keys=True)
                     self._deliver(('eew', data['EventID']), revision, message, -30 <= age <= 120)
             elif kind == 'jma_eqlist':
                 revision = data.get('md5') or json.dumps(data, sort_keys=True)
@@ -291,18 +315,44 @@ class Connection:
                     self._seen['eqlist'] = revision
                     self._details_wake.set()
             elif kind == 'jma_tsunami':
+                order = report_order(data.get('report') or {})
+                deadline = timestamp(data.get('validUntil')) or 0
+                if order != (0, 0) and order < self._tsunami_order:
+                    return
+                if data.get('trusted') is True and order == self._tsunami_order and deadline and deadline < self._tsunami_deadline:
+                    return
                 messages = adapt_tsunami(data)
+                self._tsunami_generation += 1
                 if not messages:
                     self._listener({'type': 'source_status', 'source': 'wolfx', 'source_valid_until': 0})
+                    return
+                self._tsunami_order = order
+                self._tsunami_deadline = deadline
+                products = {message['head']['type'] for message in messages}
+                if 'VTSE52' in self._tsunami_products and 'VTSE52' not in products:
+                    self._listener({'type': 'wolfx_obs_clear', 'source': 'wolfx'})
+                for removed in self._tsunami_products - products:
+                    self._seen.pop(('tsunami', removed), None)
+                    self._observation_revisions.pop(removed, None)
+                self._tsunami_products = products
                 for message in messages:
                     # Trust renewals must refresh expiry without duplicate alerts.
                     key = ('tsunami', message['head']['type'])
                     revision = json.dumps({k: v for k, v in message.items() if k not in ('source_valid_until', 'wolfx_payload')}, sort_keys=True)
+                    observation_revision = json.dumps({
+                        'time': message['body']['reportDateTime'],
+                        'observations': message['body']['body']['tsunami'].get('observations')}, sort_keys=True)
+                    if message['head']['type'] == 'VTSE51' and self._observation_revisions.get('VTSE51') == observation_revision:
+                        # A forecast change is already announced by VTSE41. An
+                        # unchanged retained coastal report supplies display data,
+                        # not a second alert for that same forecast change.
+                        message['_quiet_update'] = True
                     with self._delivery_lock:
                         if self._seen.get(key) == revision and message.get('source_valid_until'):
                             self._listener({**message, '_source_refresh_only': True})
                         else:
                             self._deliver(key, revision, message)
+                    self._observation_revisions[message['head']['type']] = observation_revision
         except Exception:
             logger.exception('Wolfx message failed')
 
@@ -318,7 +368,10 @@ class Connection:
             self._ws = websocket.WebSocketApp('wss://ws-api.wolfx.jp/all_eew',
                                              on_open=self._on_open, on_message=self._on_message,
                                              on_error=lambda ws, err: logger.warning('Wolfx WebSocket: %s', err))
-            self._ws.run_forever(ping_interval=30, ping_timeout=10)
+            try:
+                self._ws.run_forever(ping_interval=30, ping_timeout=10)
+            except Exception:
+                logger.exception('Wolfx WebSocket receiver failed; reconnecting')
             if time.monotonic() - opened > 60:
                 delay = 5
             if self._stop.wait(delay):
@@ -351,10 +404,12 @@ class Connection:
                     if self._stop.is_set():
                         return
                     try:
+                        with self._delivery_lock:
+                            generation = self._tsunami_generation if feed == 'jma_tsunami' else None
                         response = session.get('https://api.wolfx.jp/' + feed + '.json',
                                                headers={'Accept-Encoding': 'gzip, deflate'}, timeout=15)
                         response.raise_for_status()
-                        self._on_message(None, json.dumps({**response.json(), 'type': feed}))
+                        self._on_message(None, json.dumps({**response.json(), 'type': feed}), generation)
                     except (requests.RequestException, ValueError):
                         logger.warning('Wolfx %s HTTP recovery failed', feed, exc_info=True)
                 self._stop.wait(30)
@@ -362,19 +417,39 @@ class Connection:
     def _handle_details(self, data):
         reports = []
         for event in data.get('events') or []:
-            if event.get('status') == 'cancelled':
-                self._deliver(('cancelled', event.get('eventId')), json.dumps(event, sort_keys=True),
-                              {'type': 'wolfx_retraction', 'event_id': event.get('eventId'), 'wolfx_payload': event})
+            if not isinstance(event, dict):
+                logger.warning('Ignoring malformed Wolfx event')
                 continue
+            event_id = event.get('eventId')
+            if not event_id:
+                continue
+            if event.get('status') == 'cancelled':
+                self._deliver(('cancelled', event_id), json.dumps(event, sort_keys=True),
+                              {'type': 'wolfx_retraction', 'event_id': event_id, 'wolfx_payload': event})
+                self._cancelled.add(event_id)
+                continue
+            if event_id in self._cancelled:
+                # Reinstatement must be delivered even when its report is byte-for-
+                # byte identical to the state before the cancellation.
+                self._cancelled.remove(event_id)
+                self._seen.pop(('cancelled', event_id), None)
+                for key in list(self._seen):
+                    if isinstance(key, tuple) and key[:2] == ('report', event_id):
+                        self._seen.pop(key, None)
             for report in event.get('reports') or []:
+                if not isinstance(report, dict):
+                    logger.warning('Ignoring malformed Wolfx report')
+                    continue
                 try:
                     message = adapt_report(event, report)
-                except (ValueError, TypeError, KeyError):
+                except (ValueError, TypeError, KeyError, AttributeError):
                     logger.warning('Ignoring malformed Wolfx product %s', report.get('id'), exc_info=True)
                     continue
                 if message:
                     reports.append((event, report, message))
-        reports.sort(key=lambda item: timestamp(item[1]['time']))
+                    key = (event_id, report['product'])
+                    self._report_orders[key] = max(self._report_orders.get(key, (0, 0)), report_order(report))
+        reports.sort(key=lambda item: report_order(item[1]))
         for event, report, message in reports:
             age = time.time() - timestamp(report['time'])
             if age < -30:
@@ -383,8 +458,26 @@ class Connection:
             # announcing old earthquakes or rewriting receipt-time replay history.
             if age > 180:
                 message['_historical'] = True
-            self._deliver(('report', event['eventId'], report['product']),
-                          json.dumps({k: v for k, v in message.items() if k != 'wolfx_payload'}, sort_keys=True), message)
+            if report_order(report) < self._report_orders[(event['eventId'], report['product'])]:
+                message['_historical'] = True
+                message['_archive_only'] = True
+            point_order = max((order for (eid, product), order in self._report_orders.items()
+                               if eid == event['eventId'] and product != 'VXSE51'), default=(0, 0))
+            if report['product'] != 'VXSE51' and report_order(report) < point_order:
+                # An older seismic report can still recover stations, but must
+                # not roll back a hypocenter supplied by a newer epicenter report.
+                message['_point_archive_only'] = True
+                message['_historical'] = True
+            # Report identity, not just product, is essential when Wolfx retains
+            # several product revisions supplying different effective fields.
+            key = ('report', event['eventId'], report['product'], report.get('id') or report['time'])
+            revision = {k: v for k, v in message.items()
+                        if k not in ('wolfx_payload', '_historical', '_archive_only', '_point_archive_only')}
+            revision['completeness'] = event.get('completeness')
+            self._deliver(key, json.dumps(revision, sort_keys=True), message)
+        retained = {event.get('eventId') for event in data.get('events') or [] if isinstance(event, dict)}
+        self._report_orders = {key: value for key, value in self._report_orders.items() if key[0] in retained}
+        self._cancelled.intersection_update(retained)
 
     def start(self):
         if not self._listener:
