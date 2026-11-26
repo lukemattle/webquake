@@ -141,8 +141,10 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 #quake-sidebar-toggle:hover { background: rgba(50,50,50,0.95); color: #fff; }
 #quake-sidebar-list { overflow-y: auto; flex: 1; }
 .history-sheet-controls { display: none; }
-#quake-sidebar-list::-webkit-scrollbar { width: 4px; }
-#quake-sidebar-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+#quake-sidebar-list::-webkit-scrollbar,
+#eew-panel::-webkit-scrollbar { width: 4px; }
+#quake-sidebar-list::-webkit-scrollbar-thumb,
+#eew-panel::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 .quake-entry {
     display: flex; align-items: stretch; border-bottom: 1px solid #1e1e1e;
     text-decoration: none; color: inherit; cursor: pointer;
