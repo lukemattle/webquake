@@ -360,7 +360,8 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 .lang-seg-btn.active { background: #4a9eff; color: #fff; }
 
 .settings-note { color: #888; font-size: 0.78em; line-height: 1.4; }
-.sound-location-note { max-width: 290px; }
+/* Fill the settings content width without making descriptions widen the popup. */
+.sound-location-note { width: 0; min-width: 100%; }
 .sound-select {
     background: #292929; color: #eee; border: 1px solid #555;
     border-radius: 3px; padding: 4px 6px; font: inherit; font-size: 0.8em;
