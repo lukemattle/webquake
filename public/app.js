@@ -1,4 +1,4 @@
-const VERSION = 'v1.1.2';
+const VERSION = 'v1.1.3';
 const FRONTEND_ASSET_BASE = new URL('.', document.currentScript.src);
 
 // Data source filter (Both / Japan only / Taiwan only)
@@ -289,6 +289,7 @@ document.getElementById('bottom-version').textContent = '– ' + VERSION;
 const sndNewQuake       = document.getElementById('snd-new-quake');
 const sndNewInfo        = document.getElementById('snd-new-info');
 const sndNewReport      = document.getElementById('snd-new-report');
+const sndSecondaryQuake = document.getElementById('snd-secondary-quake');
 const sndNewTsunami     = document.getElementById('snd-new-tsunami');
 const sndTsunamiWarning = document.getElementById('snd-tsunami-warning');
 
@@ -304,6 +305,193 @@ let muteEewReport      = false;
 let muteReport         = false;
 let muteTsunamiWarning = false;
 let muteTsunamiAdvisory = false;
+
+const QUAKE_SOUND_SETTINGS_KEY = 'webquake_dev_quake_sound_settings';
+const SOUND_THRESHOLD_VALUES = ['all', '1', '2', '3', '4', '5-', '5+', '6-', '6+', '7'];
+let quakeSoundSettings = loadQuakeSoundSettings();
+
+function loadQuakeSoundSettings() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(QUAKE_SOUND_SETTINGS_KEY)); } catch (e) {}
+    return {
+        eewThreshold: SOUND_THRESHOLD_VALUES.includes(saved?.eewThreshold) ? saved.eewThreshold : 'all',
+        reportThreshold: SOUND_THRESHOLD_VALUES.includes(saved?.reportThreshold) ? saved.reportThreshold : 'all',
+        belowThreshold: saved?.belowThreshold === 'secondary' ? 'secondary' : 'silent'
+    };
+}
+
+function setQuakeSoundSetting(name, value) {
+    if (name === 'belowThreshold' ? !['silent', 'secondary'].includes(value) :
+        !['eewThreshold', 'reportThreshold'].includes(name) || !SOUND_THRESHOLD_VALUES.includes(value)) return;
+    quakeSoundSettings[name] = value;
+    try { localStorage.setItem(QUAKE_SOUND_SETTINGS_KEY, JSON.stringify(quakeSoundSettings)); } catch (e) {}
+}
+
+function updateQuakeSoundSettingsUI() {
+    for (const [id, name] of [['sound-eew-threshold', 'eewThreshold'], ['sound-report-threshold', 'reportThreshold']]) {
+        const select = document.getElementById(id);
+        select.replaceChildren(...SOUND_THRESHOLD_VALUES.map(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value === 'all' ? t('All intensities', 'すべての震度', '所有震度') : value;
+            return option;
+        }));
+        select.value = quakeSoundSettings[name];
+    }
+    const below = document.getElementById('sound-below-threshold');
+    below.options[0].textContent = t('Silent', '無音', '靜音');
+    below.options[1].textContent = t('Secondary sound', 'サブ音', '次要音效');
+    below.value = quakeSoundSettings.belowThreshold;
+}
+
+function quakeSoundIntensity(data) {
+    if (soundLocation && (data.area_intensities || []).length) {
+        const code = findRegionCodeForPoint(soundLocation.lat, soundLocation.lon);
+        return Math.max(-1, ...data.area_intensities
+            .filter(area => code != null && String(area.code) === String(code))
+            .map(area => intRank(area.max_int)));
+    }
+    return intRank(data.max_int);
+}
+
+function quakeSoundMode(data, threshold) {
+    const intensity = quakeSoundIntensity(data);
+    // An early report may not yet have an intensity estimate. Preserve its
+    // normal sound until a known intensity can be compared with the threshold.
+    if (threshold === 'all' || intensity < 0 || intensity >= intRank(threshold)) return 'normal';
+    return quakeSoundSettings.belowThreshold;
+}
+
+// Local to this browser; never sent to the server or used by rendering filters.
+const SOUND_LOCATION_KEY = 'webquake_dev_sound_location';
+let soundLocation = null;
+try {
+    const saved = JSON.parse(localStorage.getItem(SOUND_LOCATION_KEY));
+    if (validSoundLocation(saved)) soundLocation = saved;
+} catch (e) {}
+let soundLocationRevision = 0;
+let choosingSoundLocation = false;
+let soundLocationMark = null;
+
+function validSoundLocation(point) {
+    return point && Number.isFinite(point.lat) && Math.abs(point.lat) <= 90 &&
+        Number.isFinite(point.lon) && Math.abs(point.lon) <= 180;
+}
+
+function setSoundLocation(point) {
+    if (point !== null && !validSoundLocation(point)) return;
+    soundLocation = point;
+    soundLocationRevision++;
+    try {
+        if (point) localStorage.setItem(SOUND_LOCATION_KEY, JSON.stringify(point));
+        else localStorage.removeItem(SOUND_LOCATION_KEY);
+    } catch (e) {}
+    cancelSoundLocationSelection();
+    updateSoundLocationUI();
+}
+
+function chooseSoundLocation() {
+    choosingSoundLocation = true;
+    document.getElementById('settings-popup').classList.remove('visible');
+    collapseSidebarOnMobile();
+    document.getElementById('sound-location-prompt').hidden = false;
+    map.getContainer().classList.add('choosing-sound-location');
+}
+
+function cancelSoundLocationSelection() {
+    choosingSoundLocation = false;
+    document.getElementById('sound-location-prompt').hidden = true;
+    map.getContainer().classList.remove('choosing-sound-location');
+}
+
+function updateSoundLocationUI() {
+    document.getElementById('sound-location-coordinates').textContent = soundLocation
+        ? `${soundLocation.lat.toFixed(4)}, ${soundLocation.lon.toFixed(4)}` : '';
+    document.getElementById('clear-sound-location').disabled = !soundLocation;
+    if (soundLocationMark) map.removeLayer(soundLocationMark);
+    soundLocationMark = soundLocation ? L.circleMarker([soundLocation.lat, soundLocation.lon], {
+        radius: 7, color: '#fff', weight: 2, fillColor: '#4a9eff', fillOpacity: 1,
+        interactive: false, pane: 'markerPane'
+    }).addTo(map) : null;
+    updateSoundLocationMarkerSize();
+}
+
+function updateSoundLocationMarkerSize() {
+    if (!soundLocationMark) return;
+    const radius = Math.max(3, Math.min(7, 3 + (map.getZoom() - 5) * 0.8));
+    soundLocationMark.setRadius(radius);
+    soundLocationMark.setStyle({weight: radius < 5 ? 1 : 2});
+}
+
+// Heuristic epicentral radii in km, only for EEWs without regional estimates.
+// These are sound-selection limits, not a shaking prediction or safety boundary.
+const SOUND_RADIUS_KM = {
+    '0': 0, '1': 50, '2': 100, '3': 150, '4': 250,
+    '5-': 350, '5+': 450, '6-': 600, '6+': 750, '7': 1000
+};
+
+function quakeAffectsSoundLocation(data, allowDistance, point = soundLocation) {
+    if (!point) return true;
+    const areas = data.area_intensities || [];
+    // The presence of regional data is authoritative, even if our region is
+    // omitted or has an unknown intensity. Never fall back to distance then.
+    if (areas.length) {
+        const code = findRegionCodeForPoint(point.lat, point.lon);
+        return code != null && areas.some(area => String(area.code) === String(code) && intRank(area.max_int) > 0);
+    }
+    if (!allowDistance || !validSoundLocation({lat: data.lat, lon: data.lon})) return false;
+    const radius = SOUND_RADIUS_KM[data.max_int] || 0;
+    return radius > 0 && L.latLng(point.lat, point.lon).distanceTo([data.lat, data.lon]) <= radius * 1000;
+}
+
+function withLocalizedQuakeSound(data, allowDistance, play) {
+    if (replayActive) return;
+    if (!soundLocation) { play(); return; }
+    const revision = soundLocationRevision;
+    const point = soundLocation;
+    const check = () => {
+        if (!replayActive && revision === soundLocationRevision &&
+            quakeAffectsSoundLocation(data, allowDistance, point)) play();
+    };
+    // A report can arrive before the GeoJSON. Wait for the existing load rather
+    // than silently discarding its regional match during startup.
+    if ((data.area_intensities || []).length && !_regionFeatureBounds) japanRegionsReady.then(check);
+    else check();
+}
+
+function playEewSounds(data, key) {
+    withLocalizedQuakeSound(data, true, () => {
+        const mode = quakeSoundMode(data, quakeSoundSettings.eewThreshold);
+        if (mode !== 'normal') {
+            if (mode === 'secondary' && (!muteEewReport || (!muteEewAlert && !seenSecondaryEewOrigins.has(key)))) {
+                seenSecondaryEewOrigins.add(key);
+                playSound(sndSecondaryQuake);
+            }
+            return;
+        }
+        if (!seenEewOrigins.has(key)) {
+            seenEewOrigins.add(key);
+            if (!muteEewAlert) playSound(sndNewQuake);
+        }
+        if (!muteEewReport) playSound(sndNewReport);
+    });
+}
+
+function playQuakeInfoSound(data, key, ts, fp, suppress = false) {
+    withLocalizedQuakeSound(data, false, () => {
+        const mode = quakeSoundMode(data, quakeSoundSettings.reportThreshold);
+        // Local intensity can cross the threshold without the event maximum
+        // changing, so include it in the shared live/history fingerprint.
+        fp = [fp, quakeSoundIntensity(data), mode].join('|');
+        const matchKey = resolveQuakeSoundKey(key, ts);
+        const prev = quakeInfoSoundState.get(matchKey);
+        if ((!prev || prev.fp !== fp) && !muteReport && !suppress) {
+            if (mode === 'normal') playSound(sndNewInfo);
+            else if (mode === 'secondary') playSound(sndSecondaryQuake);
+        }
+        quakeInfoSoundState.set(matchKey, { ts, fp });
+    });
+}
 
 function toggleSettings() {
     closeBarMenus();
@@ -501,6 +689,16 @@ setInterval(_evalNiedWarning, 1000);
 
 const CARTO_API_KEY = 'CARTO_KEY';
 const map = L.map('map', { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM, zoomControl: false, preferCanvas: true });
+map.on('click', event => {
+    if (choosingSoundLocation) {
+        setSoundLocation({lat: event.latlng.lat, lon: event.latlng.wrap().lng});
+    }
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && choosingSoundLocation) cancelSoundLocationSelection();
+});
+updateSoundLocationUI();
+map.on('zoomend', updateSoundLocationMarkerSize);
 L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/dark_nolabels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`, {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org/">OSM</a>',
     subdomains: 'abcd', maxZoom: 19
@@ -616,6 +814,7 @@ const epicenterMarks = new Map();
 const activeEews     = new Map(); // key → EEW data object
 const activeTwEews   = new Map(); // Event key → Taiwan EEW; marker/wave keys use tw:*.
 const seenEewOrigins    = new Set(); // origin_times we've already sounded for
+const seenSecondaryEewOrigins = new Set(); // Does not consume the normal alert on escalation.
 // Canonical quake key → { ts, fp } of the last info sound.
 // Share this across live and JMA history sources to avoid duplicate chimes.
 const quakeInfoSoundState = new Map();
@@ -1005,9 +1204,11 @@ class NiedSpatialFilter {
             }
             const neighbours = this.neighbours.get(key);
             if (!neighbours.length) continue;
-            // Missing readings count against support from the fixed neighbour set.
-            const supporters = neighbours.filter(otherKey => intRank(current.get(otherKey)?.int) >= 1).length;
-            if (supporters < Math.ceil(neighbours.length / 2)) continue;
+            // A small local quake may reach only a pair of stations. Require
+            // one confirming neighbour rather than half the nearby network;
+            // isolated spikes and missing readings still provide no support.
+            const supported = neighbours.some(otherKey => intRank(current.get(otherKey)?.int) >= 1);
+            if (!supported) continue;
             acceptedStations.push(station);
 
             if (!_regionFeatureBounds) continue;
@@ -1082,7 +1283,7 @@ function resetTwRegionColors() {
 
 // Resolve against this script so /dev/ja/ and /dev/zh/ use the same development
 // assets as /dev/, without falling back to production files or a language path.
-fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
+const japanRegionsReady = fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
     .then(gj => {
         _regionFeatureBounds = gj.features.map(f => ({ f, bbox: _geometryBBox(f.geometry) }));
@@ -1097,7 +1298,7 @@ fetch(new URL('japan-regions.geojson', FRONTEND_ASSET_BASE))
         // this resolved, the layer would otherwise appear regardless.
         if (!showJapan()) map.removeLayer(regionLayer);
         refreshNiedSpatialState();
-    });
+    }).catch(error => console.error('Could not load Japan regions', error));
 
 fetch(new URL('tsunami-regions.geojson', FRONTEND_ASSET_BASE))
     .then(r => r.json())
@@ -1392,7 +1593,7 @@ function updateRegionPanelState() {
     entry.hidden = !mobile || !visible;
     const hidden = !visible || (mobile && !mobileRegionsOpen);
     if (hidden && panel.contains(document.activeElement)) {
-        (entry.hidden ? document.getElementById('history-btn') : entry).focus();
+        (entry.hidden ? document.getElementById('history-btn') : entry).focus({preventScroll: true});
     }
     panel.hidden = hidden;
     entry.setAttribute('aria-expanded', String(mobile && mobileRegionsOpen && visible));
@@ -1409,7 +1610,7 @@ function setRegionSheetOpen(open) {
     }
     updateRegionPanelState();
     positionObsPanel();
-    if (mobileRegionsOpen) document.getElementById('regions-close').focus();
+    if (mobileRegionsOpen) document.getElementById('regions-close').focus({preventScroll: true});
     updateMobilePanelOffsets();
 }
 
@@ -3051,6 +3252,10 @@ function kindLabelZh(code) {
     return '預報';
 }
 
+setInterval(() => {
+    if (activeTsunamiData?.source === 'wolfx' || activeTsunamiObs?.source === 'wolfx') renderTsunamiCard();
+}, 1000);
+
 function renderTsunamiCard() {
     const panel = document.getElementById('tsunami-panel');
     if (!showJapan() || (!activeTsunamiData && !activeTsunamiObs)) {
@@ -3062,6 +3267,14 @@ function renderTsunamiCard() {
     const d   = activeTsunamiData;
     const obs = activeTsunamiObs;
     let html = '<div class="tsun-card">';
+    const sourceData = d?.source === 'wolfx' ? d : (obs?.source === 'wolfx' ? obs : null);
+    if (sourceData) {
+        const clock = replayActive && replayClock != null ? currentReplayClock() : Date.now() / 1000;
+        const stale = !sourceData.source_valid_until || clock >= sourceData.source_valid_until;
+        html += stale
+            ? '<div class="tsun-time" role="status"><span class="en">Wolfx update unavailable. Last known report; check JMA for current warnings.</span><span class="ja">Wolfxの更新を確認できません。前回の情報です。最新の警報は気象庁で確認してください。</span><span class="zh">無法確認 Wolfx 更新。以下為上次資訊，請向日本氣象廳確認最新警報。</span></div>'
+            : '';
+    }
 
     if (d) {
         const level = d.warning_level || '';
@@ -3435,6 +3648,7 @@ function t(en, ja, zh) {
 
 function setLanguage(lang) {
     currentLanguage = lang;
+    updateQuakeSoundSettingsUI();
     document.documentElement.lang = lang;
     document.getElementById('language-btn').textContent = lang.toUpperCase() + ' ▾';
     for (const button of document.querySelectorAll('[data-language]')) {
@@ -4131,7 +4345,9 @@ function clearEewDisplay(key) {
 function displayData(data) {
     if (data.type === 'jma_history') {
         const top = data.quakes.length > 0 ? data.quakes[0] : null;
-        if (top) {
+        // History summaries have no regional intensities. Localized sounds use
+        // the full report, and must not have their dedup state consumed here.
+        if (top && !soundLocation) {
             const tsSeconds = top.at ? Math.round(new Date(top.at).getTime() / 1000) : null;
             const matchKey = resolveQuakeSoundKey(top.ctt || top.at, tsSeconds);
             const fp = quakeSoundFingerprint({
@@ -4141,9 +4357,7 @@ function displayData(data) {
                 depth: parseQuakeDepth(top.cod),
                 loc: top.en_anm || top.anm || null,
             });
-            const prev = quakeInfoSoundState.get(matchKey);
-            if (jmaHistoryReceived && (!prev || prev.fp !== fp) && !muteReport) playSound(sndNewInfo);
-            quakeInfoSoundState.set(matchKey, { ts: tsSeconds, fp });
+            playQuakeInfoSound({max_int: top.maxi}, matchKey, tsSeconds, fp, !jmaHistoryReceived);
         }
         jmaHistoryReceived = true;
         renderQuakeHistory(data.quakes);
@@ -4208,11 +4422,7 @@ function displayData(data) {
         hasPastQuakeData = false;
         if (jmaSidebarActiveTs !== null || liveStationsHidden) { clearJmaStations(); renderSidebar(lastQuakeData); }
         const key = eewEventKey(data);
-        if (!seenEewOrigins.has(key)) {
-            seenEewOrigins.add(key);
-            if (!muteEewAlert) playSound(sndNewQuake);
-        }
-        if (!muteEewReport) playSound(sndNewReport);
+        playEewSounds(data, key);
         if (activeEews.get(key)?.warning) data = { ...data, warning: true };
         activeEews.set(key, data);
         renderEewPanels();
@@ -4240,9 +4450,7 @@ function displayData(data) {
                 depth: data.depth,
                 loc,
             });
-            const prev = quakeInfoSoundState.get(matchKey);
-            if ((!prev || prev.fp !== fp) && !muteReport) playSound(sndNewInfo);
-            quakeInfoSoundState.set(matchKey, { ts: tsSeconds, fp });
+            playQuakeInfoSound(data, matchKey, tsSeconds, fp);
         }
         if (data.max_int && data.max_int !== '0') loadTimelineMarkersAndGaps();
         hasPastQuakeData = true;
@@ -4310,12 +4518,14 @@ function displayData(data) {
         activeTsunamiData = data;
         drawTsunamiCoastlines(data);
         renderTsunamiCard();
-        if (data.warning_level === 'Warning' || data.warning_level === 'Major Warning') {
-            if (!muteTsunamiWarning) playSound(sndTsunamiWarning);
-        } else {
-            if (!muteTsunamiAdvisory) playSound(sndNewTsunami);
+        if (!data.source_refresh_only) {
+            if (data.warning_level === 'Warning' || data.warning_level === 'Major Warning') {
+                if (!muteTsunamiWarning) playSound(sndTsunamiWarning);
+            } else {
+                if (!muteTsunamiAdvisory) playSound(sndNewTsunami);
+            }
+            if (data.warning_level) loadTimelineMarkersAndGaps();
         }
-        if (data.warning_level) loadTimelineMarkersAndGaps();
     } else if (data.type === 'tsunami_obs') {
         activeTsunamiObs = data;
         drawOffshoreObsRegions(data);

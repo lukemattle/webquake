@@ -65,9 +65,14 @@
 
 <body>
 <div id="map"></div>
+<div id="sound-location-prompt" role="status" hidden>
+    <span class="en">Click or tap the map to set your sound location.</span><span class="ja">地図をクリック・タップして通知地点を設定してください。</span><span class="zh">點選地圖以設定音效地點。</span>
+    <button type="button" class="lang-seg-btn" onclick="cancelSoundLocationSelection()"><span class="en">Cancel</span><span class="ja">キャンセル</span><span class="zh">取消</span></button>
+</div>
 <audio id="snd-new-quake"       src="/new_quake.mp3"      preload="auto"></audio>
 <audio id="snd-new-info"        src="/new_info.mp3"       preload="auto"></audio>
 <audio id="snd-new-report"      src="/new-report.mp3"     preload="auto"></audio>
+<audio id="snd-secondary-quake" src="/secondary_quake.mp3" preload="none"></audio>
 <audio id="snd-new-tsunami"     src="/new-tsunami.mp3"    preload="auto"></audio>
 <audio id="snd-tsunami-warning" src="/tsunami-warning.mp3" preload="auto"></audio>
 
@@ -219,24 +224,43 @@
         <span class="tog"><input type="checkbox" id="tog-live-regions" checked onchange="setLiveRegionColouring(this.checked)"><span class="tog-track"></span></span>
     </label>
     <div class="settings-title"><span class="en">Sound</span><span class="ja">音</span><span class="zh">音效</span></div>
+    <div class="settings-row">
+        <button type="button" class="lang-seg-btn" onclick="chooseSoundLocation()"><span class="en">Set sound location on map</span><span class="ja">地図で通知地点を設定</span><span class="zh">在地圖設定音效地點</span></button>
+        <button type="button" class="lang-seg-btn" id="clear-sound-location" onclick="setSoundLocation(null)"><span class="en">Clear</span><span class="ja">解除</span><span class="zh">清除</span></button>
+    </div>
+    <div id="sound-location-coordinates" class="settings-note" aria-live="polite"></div>
+    <div class="settings-note sound-location-note"><span class="en">Optional: only earthquake sounds that may affect this point. Saved in this browser. Clear to hear all earthquakes. Displays and tsunami sounds stay the same.</span><span class="ja">任意：この地点に影響する可能性のある地震のみ音で通知します。このブラウザに保存されます。解除すると全地震の音が鳴ります。表示と津波の音は変わりません。</span><span class="zh">選填：僅播放可能影響此地點的地震音效，儲存於此瀏覽器。清除後播放所有地震音效。畫面與海嘯音效不變。</span></div>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">EEW Alert</span><span class="ja">EEW警報音</span><span class="zh">緊急地震速報警報音</span></span>
+        <span class="settings-label"><span class="en">EEW Alert Sounds</span><span class="ja">緊急地震速報の警報音</span><span class="zh">緊急地震速報警報音效</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-eew-alert" checked onchange="muteEewAlert=!this.checked"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">EEW Report</span><span class="ja">EEW更新音</span><span class="zh">緊急地震速報更新音</span></span>
+        <span class="settings-label"><span class="en">EEW Report Sounds</span><span class="ja">緊急地震速報の更新音</span><span class="zh">緊急地震速報更新音效</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-eew-report" checked onchange="muteEewReport=!this.checked"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Report</span><span class="ja">地震情報</span><span class="zh">地震資訊</span></span>
+        <span class="settings-label"><span class="en">Quake Report Sounds</span><span class="ja">地震情報の通知音</span><span class="zh">地震資訊通知音效</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-report" checked onchange="muteReport=!this.checked"><span class="tog-track"></span></span>
     </label>
+    <label class="settings-row" for="sound-eew-threshold">
+        <span class="settings-label"><span class="en">Minimum intensity for normal EEW sounds</span><span class="ja">緊急地震速報の通常音を鳴らす最低震度</span><span class="zh">播放速報一般音效的最低震度</span></span>
+        <select class="sound-select" id="sound-eew-threshold" onchange="setQuakeSoundSetting('eewThreshold', this.value)"></select>
+    </label>
+    <label class="settings-row" for="sound-report-threshold">
+        <span class="settings-label"><span class="en">Minimum intensity for normal Quake Report sounds</span><span class="ja">地震情報の通常音を鳴らす最低震度</span><span class="zh">播放地震資訊一般音效的最低震度</span></span>
+        <select class="sound-select" id="sound-report-threshold" onchange="setQuakeSoundSetting('reportThreshold', this.value)"></select>
+    </label>
+    <label class="settings-row" for="sound-below-threshold">
+        <span class="settings-label"><span class="en">Sound for intensities below the minimum</span><span class="ja">最低震度に満たない場合の音</span><span class="zh">未達最低震度時的音效</span></span>
+        <select class="sound-select" id="sound-below-threshold" onchange="setQuakeSoundSetting('belowThreshold', this.value)"><option value="silent">Silent</option><option value="secondary">Secondary sound</option></select>
+    </label>
+    <div class="settings-note sound-location-note"><span class="en">At or above the selected intensity, normal sounds play. Below it, choose the secondary sound or silence. Uses your sound location’s regional intensity when available; otherwise the event maximum. Unknown intensity uses normal sounds. The sound switches above still apply. Preferences are saved in this browser.</span><span class="ja">選択した震度以上では通常音を鳴らします。それ未満ではサブ音または無音を選べます。通知地点の地域震度がある場合はその震度を、なければ最大震度を使用します。震度不明の場合は通常音です。上の音のスイッチも適用されます。設定はこのブラウザに保存されます。</span><span class="zh">達到或超過所選震度時播放一般音效，低於此震度時可選擇次要音效或靜音。有音效地點的區域震度時使用該震度，否則使用事件最大震度。震度不明時播放一般音效。上方音效開關仍有效。設定儲存於此瀏覽器。</span></div>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Tsunami Warning</span><span class="ja">津波警報音</span><span class="zh">海嘯警報音</span></span>
+        <span class="settings-label"><span class="en">Tsunami Warning Sounds</span><span class="ja">津波警報の通知音</span><span class="zh">海嘯警報音效</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-tsunami-warning" checked onchange="muteTsunamiWarning=!this.checked"><span class="tog-track"></span></span>
     </label>
     <label class="settings-row">
-        <span class="settings-label"><span class="en">Tsunami Advisory</span><span class="ja">津波注意報音</span><span class="zh">海嘯注意報音</span></span>
+        <span class="settings-label"><span class="en">Tsunami Advisory Sounds</span><span class="ja">津波注意報の通知音</span><span class="zh">海嘯注意報音效</span></span>
         <span class="tog"><input type="checkbox" id="tog-snd-tsunami-advisory" checked onchange="muteTsunamiAdvisory=!this.checked"><span class="tog-track"></span></span>
     </label>
     <div class="settings-title"><span class="en">Notifications</span><span class="ja">通知</span><span class="zh">通知</span></div>

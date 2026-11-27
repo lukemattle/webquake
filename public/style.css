@@ -141,8 +141,10 @@ body.has-regions #eew-panel { max-height: min(320px, 35dvh); overflow-y: auto; p
 #quake-sidebar-toggle:hover { background: rgba(50,50,50,0.95); color: #fff; }
 #quake-sidebar-list { overflow-y: auto; flex: 1; }
 .history-sheet-controls { display: none; }
-#quake-sidebar-list::-webkit-scrollbar { width: 4px; }
-#quake-sidebar-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+#quake-sidebar-list::-webkit-scrollbar,
+#eew-panel::-webkit-scrollbar { width: 4px; }
+#quake-sidebar-list::-webkit-scrollbar-thumb,
+#eew-panel::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 .quake-entry {
     display: flex; align-items: stretch; border-bottom: 1px solid #1e1e1e;
     text-decoration: none; color: inherit; cursor: pointer;
@@ -360,6 +362,24 @@ a.quake-jma-popover-item { color: #8fb8ff; }
 .lang-seg-btn.active { background: #4a9eff; color: #fff; }
 
 .settings-note { color: #888; font-size: 0.78em; line-height: 1.4; }
+/* Fill the settings content width without making descriptions widen the popup. */
+.sound-location-note { width: 0; min-width: 100%; }
+.sound-select {
+    background: #292929; color: #eee; border: 1px solid #555;
+    border-radius: 3px; padding: 4px 6px; font: inherit; font-size: 0.8em;
+    max-width: 145px; min-width: 70px;
+}
+.sound-select:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+#clear-sound-location:disabled { opacity: 0.4; cursor: default; }
+#map.choosing-sound-location, #map.choosing-sound-location .leaflet-interactive { cursor: crosshair; }
+#sound-location-prompt {
+    position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 1100; width: max-content; max-width: calc(100% - 24px);
+    box-sizing: border-box; background: #141414; color: #eee;
+    border: 1px solid #4a9eff; border-radius: 6px; padding: 10px 12px;
+    font-size: 0.88em; pointer-events: auto;
+}
+#sound-location-prompt[hidden] { display: none; }
 .settings-note-warn { color: #e0b84a; }
 #ntfy-subscribe-links { display: flex; flex-direction: column; gap: 6px; }
 .ntfy-btn {
@@ -611,7 +631,7 @@ html[lang="zh"] .en, html[lang="zh"] .ja { display: none; }
         background: rgba(15,15,15,0.98); box-shadow: 0 -4px 20px #0006;
     }
     #regions-header { align-items: center; gap: 8px; padding: 8px 10px; }
-    #regions-toggle { padding: 0; min-height: 36px; font-size: 0.82em; }
+    #regions-toggle { flex: 1; width: auto; min-width: 0; padding: 0; min-height: 36px; font-size: 0.82em; }
     #regions-chevron { display: none; }
     #regions-close { display: inline-flex; min-width: 36px; height: 36px; flex-shrink: 0; }
     #regions-content { flex: 1; }
